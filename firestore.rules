@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function approved(uid) {
+      return owner(uid) && get(/databases/$(database)/documents/approvedUsers/$(uid)).data.active == true;
+    }
+    function stringWithin(value, minimum, maximum) {
+      return value is string && value.size() >= minimum && value.size() <= maximum;
+    }
+    function uniqueOptions(value, options, minimum, maximum) {
+      return value is list && value.size() >= minimum && value.size() <= maximum
+        && value.hasOnly(options) && value.toSet().size() == value.size();
+    }
+    function muscles(value) {
+      return uniqueOptions(value, ['Chest', 'Shoulders', 'Back', 'Biceps', 'Triceps', 'Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Core'], 0, 10);
+    }
+    function stringAt(values, index) {
+      return values.size() <= index || (values[index] is string && values[index].matches('^[\\s\\S]{1,120}$'));
+    }
+    function exerciseNames(values) {
+      return values is list && values.size() <= 10 && values.toSet().size() == values.size()
+        && (values.size() == 0 || (
+          stringAt(values, 0) && stringAt(values, 1) && stringAt(values, 2) && stringAt(values, 3)
+          && stringAt(values, 4) && stringAt(values, 5) && stringAt(values, 6) && stringAt(values, 7)
+          && stringAt(values, 8) && stringAt(values, 9)
+        ));
+    }
+    function history(value) {
+      return value is map && value.keys().hasAll(['lastTrainedDate', 'lastWorkout', 'muscles'])
+        && value.keys().hasOnly(['lastTrainedDate', 'lastWorkout', 'muscles'])
+        && value.lastTrainedDate is string
+        && (value.lastTrainedDate == '' || value.lastTrainedDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))
+        && stringWithin(value.lastWorkout, 0, 120) && muscles(value.muscles)
+        && (value.lastTrainedDate != '' || (value.lastWorkout == '' && value.muscles.size() == 0));
+    }
+    function validPreferences(value) {
+      return value.keys().hasAll(['weightUnit', 'timeZone', 'weekStartsOn', 'experience', 'goals', 'sessionsPerWeek',
+          'preferredDays', 'restDays', 'sessionMinutes', 'flexibility', 'schedulingMode', 'preferredSplit',
+          'equipment', 'priorityMuscles', 'excludedExercises', 'favoriteExercises', 'recoveryPreference', 'initialHistory'])
+        && value.keys().hasOnly(['weightUnit', 'timeZone', 'weekStartsOn', 'experience', 'goals', 'sessionsPerWeek',
+          'preferredDays', 'restDays', 'sessionMinutes', 'flexibility', 'schedulingMode', 'preferredSplit',
+          'equipment', 'priorityMuscles', 'excludedExercises', 'favoriteExercises', 'recoveryPreference', 'initialHistory'])
+        && value.weightUnit in ['kg', 'lb'] && stringWithin(value.timeZone, 1, 100)
+        && value.weekStartsOn in [0, 1]
+        && value.experience in ['beginner', 'intermediate', 'advanced']
+        && uniqueOptions(value.goals, ['Build muscle', 'Get stronger', 'General fitness', 'Endurance', 'Body recomposition'], 1, 5)
+        && value.sessionsPerWeek is int && value.sessionsPerWeek >= 1 && value.sessionsPerWeek <= 7
+        && uniqueOptions(value.preferredDays, [0, 1, 2, 3, 4, 5, 6], 0, 7)
+        && uniqueOptions(value.restDays, [0, 1, 2, 3, 4, 5, 6], 0, 7)
+        && !value.preferredDays.hasAny(value.restDays)
+        && value.sessionMinutes is int && value.sessionMinutes >= 15 && value.sessionMinutes <= 180
+        && value.flexibility in ['fixed', 'flexible']
+        && value.schedulingMode in ['fixed', 'rolling', 'adaptive']
+        && value.preferredSplit in ['push-pull-legs', 'upper-lower', 'full-body', 'custom']
+        && uniqueOptions(value.equipment, ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Smith machine', 'Bodyweight', 'Resistance band', 'Kettlebell'], 1, 8)
+        && muscles(value.priorityMuscles)
+        && exerciseNames(value.excludedExercises) && exerciseNames(value.favoriteExercises)
+        && !value.excludedExercises.hasAny(value.favoriteExercises)
+        && value.recoveryPreference in ['balanced', 'conservative'] && history(value.initialHistory);
+    }
+    function validProfile(value, uid) {
+      return value.keys().hasAll(['uid', 'displayName', 'onboardingCompleted', 'schemaVersion', 'createdAt', 'updatedAt'])
+        && value.keys().hasOnly(['uid', 'displayName', 'onboardingCompleted', 'schemaVersion', 'createdAt', 'updatedAt'])
+        && value.uid == uid && stringWithin(value.uid, 1, 128)
+        && stringWithin(value.displayName, 0, 60)
+        && value.onboardingCompleted is bool && (!value.onboardingCompleted || value.displayName.size() > 0)
+        && value.schemaVersion == 1
+        && value.createdAt is int && value.createdAt > 0
+        && value.updatedAt is int && value.updatedAt >= value.createdAt;
+    }
+
+    match /approvedUsers/{uid} {
+      allow get: if owner(uid);
+      allow list, write: if false;
+    }
+    match /users/{uid} {
+      allow get: if approved(uid);
+      allow list, delete: if false;
+      allow create: if approved(uid) && validProfile(request.resource.data, uid)
+        && existsAfter(/databases/$(database)/documents/users/$(uid)/preferences/main);
+      allow update: if approved(uid) && validProfile(request.resource.data, uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt > resource.data.updatedAt
+        && existsAfter(/databases/$(database)/documents/users/$(uid)/preferences/main);
+
+      match /preferences/{preferenceId} {
+        allow get: if approved(uid) && preferenceId == 'main';
+        allow list, delete: if false;
+        allow create, update: if approved(uid) && preferenceId == 'main' && validPreferences(request.resource.data)
+          && existsAfter(/databases/$(database)/documents/users/$(uid));
+      }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

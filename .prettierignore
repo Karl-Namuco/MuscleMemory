@@ -1,0 +1,7 @@
+node_modules
+dist
+package-lock.json
+.firebase
+playwright-report
+test-results
+coverage
