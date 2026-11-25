@@ -7,6 +7,10 @@ import AppShell from './layouts/AppShell'
 import Brand from '../components/shared/Brand'
 import AuthPage, { PendingApprovalPage } from '../features/auth/AuthPage'
 import { TrainingProvider } from '../services/training/TrainingProvider'
+import { WorkoutProvider } from '../services/workouts/WorkoutProvider'
+import TrainPage from '../features/workouts/TrainPage'
+import ActiveWorkoutPage from '../features/workouts/ActiveWorkoutPage'
+import WorkoutHistoryPage from '../features/workouts/WorkoutHistoryPage'
 const TodayPage = lazy(() => import('../features/dashboard/TodayPage'))
 const OnboardingPage = lazy(() => import('../features/onboarding/OnboardingPage'))
 const ProfilePage = lazy(() => import('../features/profile/ProfilePage'))
@@ -17,9 +21,6 @@ const RoutineEditorPage = lazy(() => import('../features/routines/RoutineEditorP
 const ExerciseLibraryPage = lazy(() => import('../features/exercises/ExerciseLibraryPage'))
 const ExerciseDetailPage = lazy(() => import('../features/exercises/ExerciseDetailPage'))
 const CustomExercisePage = lazy(() => import('../features/exercises/CustomExercisePage'))
-const TrainPage = lazy(() =>
-  import('../features/foundation/FoundationPages').then((m) => ({ default: m.TrainPage })),
-)
 const ProgressPage = lazy(() =>
   import('../features/foundation/FoundationPages').then((m) => ({ default: m.ProgressPage })),
 )
@@ -115,7 +116,9 @@ export default function App() {
                 <Route
                   element={
                     <TrainingProvider>
-                      <AppShell />
+                      <WorkoutProvider>
+                        <AppShell />
+                      </WorkoutProvider>
                     </TrainingProvider>
                   }
                 >
@@ -131,6 +134,9 @@ export default function App() {
                   <Route path="/exercises/:exerciseId" element={<ExerciseDetailPage />} />
                   <Route path="/exercises/:exerciseId/edit" element={<CustomExercisePage />} />
                   <Route path="/train" element={<TrainPage />} />
+                  <Route path="/train/:sessionId" element={<ActiveWorkoutPage />} />
+                  <Route path="/history" element={<WorkoutHistoryPage />} />
+                  <Route path="/history/:sessionId" element={<WorkoutHistoryPage />} />
                   <Route path="/progress" element={<ProgressPage />} />
                   <Route path="/profile" element={<ProfilePage />} />
                   <Route path="/settings" element={<SettingsPage />} />

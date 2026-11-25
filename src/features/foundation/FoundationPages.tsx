@@ -1,99 +1,72 @@
 import { Link } from 'react-router-dom'
-import { Activity, Dumbbell, Layers3, Plus, ShieldCheck, Smartphone, Target } from 'lucide-react'
+import { Activity, Layers3, ShieldCheck, Smartphone, Target } from 'lucide-react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { useTraining } from '../../services/training/TrainingProvider'
-import { estimatedRoutineMinutes } from '../../domain/training/helpers'
+import { useWorkouts } from '../../services/workouts/WorkoutProvider'
+import { workoutTotals } from '../../domain/workout/helpers'
 import '../plan/plan.css'
 
-export function TrainPage() {
-  const { routines, loading } = useTraining()
-  const available = routines.filter((routine) => !routine.archived)
-  return (
-    <div className="page-enter">
-      <PageTitle
-        eyebrow="Make your next move"
-        title="Show up. Start somewhere."
-        description="Your routines are ready to review and refine."
-      />
-      <p className="notice">
-        Your training setup is available now. Set logging and workout sessions are the next
-        development phase.
-      </p>
-      <div className="section-label-row" style={{ marginTop: 28 }}>
-        <h2 className="section-heading">Your routine library</h2>
-        <Link className="text-link" to="/plan/routines">
-          Manage routines
-        </Link>
-      </div>
-      {loading ? (
-        <p className="muted" role="status">
-          Loading your routines…
-        </p>
-      ) : available.length ? (
-        <div className="plan-routine-grid">
-          {available.map((routine) => (
-            <Link
-              className="card plan-routine-card"
-              to={'/plan/routines/' + routine.id}
-              key={routine.id}
-            >
-              <Dumbbell size={22} />
-              <h3>{routine.name}</h3>
-              <p>
-                {routine.exercises.length} exercises ·{' '}
-                {routine.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0)} planned
-                sets
-              </p>
-              <span className="subtle-caption">
-                About {estimatedRoutineMinutes(routine.exercises)} min · estimate
-              </span>
-              <span className="text-link">Review routine</span>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <section className="empty-training card">
-          <div className="empty-icon">
-            <Dumbbell size={40} strokeWidth={1.2} />
-          </div>
-          <h2>A fresh training canvas.</h2>
-          <p>
-            Choose your exercises and plan a routine. Your workout tracker will follow in Phase 3.
-          </p>
-          <Link className="btn btn-primary" to="/plan/routines/new">
-            <Plus size={17} /> Build your first routine
-          </Link>
-        </section>
-      )}
-    </div>
-  )
-}
 export function ProgressPage() {
+  const workouts = useWorkouts()
+  const ended = workouts.sessions.filter((session) => session.status !== 'active')
+  const completed = ended.filter((session) => session.status === 'completed')
+  const performedSets = ended.reduce(
+    (sum, session) => sum + workoutTotals(session).completedSets,
+    0,
+  )
   return (
     <div className="page-enter">
       <PageTitle
         eyebrow="Every session adds up"
         title="Your story, in progress."
-        description="Meaningful progress starts with real training."
+        description="Your saved training, one session at a time."
       />
-      <section className="empty-training card">
-        <div className="empty-icon">
-          <Activity size={40} strokeWidth={1.2} />
-        </div>
-        <h2>Your first chapter is ahead.</h2>
-        <p>
-          There are no logged workouts yet. Workout history, personal records, and muscle insights
-          will appear here as those features are implemented and you start training.
-        </p>
-        <Link className="btn btn-secondary" to="/plan">
-          <Target size={17} /> Review your training plan
-        </Link>
-      </section>
+      {workouts.loading ? (
+        <p role="status">Loading your workout history…</p>
+      ) : ended.length ? (
+        <>
+          <div className="preference-grid">
+            <section className="card">
+              <p className="eyebrow">Completed workouts</p>
+              <h2>{completed.length}</h2>
+              <p className="muted">Based on your saved sessions.</p>
+            </section>
+            <section className="card">
+              <p className="eyebrow">Performed sets</p>
+              <h2>{performedSets}</h2>
+              <p className="muted">Includes the work saved in sessions ended early.</p>
+            </section>
+            <section className="card">
+              <p className="eyebrow">Your latest session</p>
+              <h2>{ended[0].routineName}</h2>
+              <Link className="text-link" to={`/history/${ended[0].id}`}>
+                View the saved workout
+              </Link>
+            </section>
+          </div>
+          <Link className="btn btn-primary" to="/history">
+            View workout history
+          </Link>
+        </>
+      ) : (
+        <section className="empty-training card">
+          <div className="empty-icon">
+            <Activity size={40} strokeWidth={1.2} />
+          </div>
+          <h2>Your first chapter is ahead.</h2>
+          <p>
+            Start a routine, record the sets you perform, and save your workout. Your history will
+            appear here.
+          </p>
+          <Link className="btn btn-secondary" to="/train">
+            <Target size={17} /> Choose a workout
+          </Link>
+        </section>
+      )}
       <div className="honest-note">
         <ShieldCheck size={18} />
         <p>
-          Your progress will be based on actual completed sets. No invented scores, streaks, or
-          recovery percentages.
+          Workout history preserves the sets you performed. Detailed trends, personal records, and
+          recovery insights are coming later.
         </p>
       </div>
     </div>
@@ -153,9 +126,9 @@ export function SettingsPage() {
               <Dialog.Content className="dialog-content">
                 <Dialog.Title>Your training setup, ready.</Dialog.Title>
                 <Dialog.Description>
-                  Version 0.2 · Training configuration. Browse exercises, create your own, build
-                  routines, and choose an active split. Workout logging, adaptive recommendations,
-                  analytics, complete data export, and account deletion follow in the next phases.
+                  Build routines and splits, log your actual sets, resume an interrupted workout,
+                  and review saved sessions. Adaptive scheduling, detailed analytics, complete data
+                  export, and account deletion are coming later.
                 </Dialog.Description>
                 <Dialog.Close asChild>
                   <button className="btn btn-primary">Got it</button>

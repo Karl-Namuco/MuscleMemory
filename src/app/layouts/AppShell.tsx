@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation, Link } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, Link, useNavigate } from 'react-router-dom'
 import {
   CalendarDays,
   ChartNoAxesCombined,
@@ -18,6 +18,7 @@ import { useAuth } from '../../services/auth/AuthProvider'
 import { usingEmulators } from '../../services/firebase/client'
 import { useOnline } from '../../hooks/useOnline'
 import { useTraining } from '../../services/training/TrainingProvider'
+import { useWorkouts } from '../../services/workouts/WorkoutProvider'
 
 const links = [
   { to: '/today', label: 'Today', icon: House },
@@ -29,6 +30,8 @@ const links = [
 export default function AppShell() {
   const { account, error, refreshAccess } = useAuth()
   const training = useTraining()
+  const workouts = useWorkouts()
+  const navigate = useNavigate()
   const [recoveryError, setRecoveryError] = useState('')
   const online = useOnline()
   const location = useLocation()
@@ -38,16 +41,16 @@ export default function AppShell() {
   }, [location.pathname])
   const syncLabel = !online
     ? 'Offline · cached data'
-    : account?.hasPendingWrites || training.hasPendingWrites
+    : account?.hasPendingWrites || training.hasPendingWrites || workouts.hasPendingWrites
       ? 'Saved locally · sync pending'
-      : account?.fromCache || training.fromCache
+      : account?.fromCache || training.fromCache || workouts.fromCache
         ? 'Showing cached data'
-        : training.loading
+        : training.loading || workouts.loading
           ? 'Loading training setup'
           : 'Changes synced'
   const SyncIcon = !online
     ? WifiOff
-    : account?.hasPendingWrites || training.hasPendingWrites
+    : account?.hasPendingWrites || training.hasPendingWrites || workouts.hasPendingWrites
       ? CloudUpload
       : CloudCheck
   return (
@@ -64,7 +67,9 @@ export default function AppShell() {
               key={to}
               to={to}
               className={({ isActive }) =>
-                isActive || (to === '/plan' && location.pathname.startsWith('/exercises'))
+                isActive ||
+                (to === '/plan' && location.pathname.startsWith('/exercises')) ||
+                (to === '/train' && location.pathname.startsWith('/history'))
                   ? 'active'
                   : undefined
               }
@@ -120,6 +125,97 @@ export default function AppShell() {
           </div>
         </header>
         <main id="page-content" className="page-content" tabIndex={-1}>
+          {workouts.activeSession && !location.pathname.startsWith('/train/') && (
+            <section className="notice workout-global-banner" aria-label="Active workout">
+              <div>
+                <strong>{workouts.activeSession.routineName}</strong>
+                <p>Your workout is still open. Pick up where you left off.</p>
+              </div>
+              <Link className="btn btn-primary" to={`/train/${workouts.activeSession.id}`}>
+                Resume workout
+              </Link>
+            </section>
+          )}
+          {workouts.error && (
+            <section className="notice" aria-label="Workout recovery">
+              <p role="alert">{workouts.error}</p>
+              <div className="workout-recovery-actions">
+                <button className="btn btn-secondary" onClick={workouts.retrySync}>
+                  Retry synchronization
+                </button>
+                {workouts.recoveryCount > 0 && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      try {
+                        workouts.downloadRecovery()
+                      } catch (failure) {
+                        setRecoveryError(
+                          failure instanceof Error
+                            ? failure.message
+                            : 'The recovery copy could not be downloaded.',
+                        )
+                      }
+                    }}
+                  >
+                    Download workout recovery
+                  </button>
+                )}
+              </div>
+              {workouts.rejectedSessions.map((session) => (
+                <div className="workout-recovery-actions" key={session.id}>
+                  <span>{session.routineName}</span>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          'Use the cloud version and remove this local recovery copy? Download the workout recovery first if you need its performed sets.',
+                        )
+                      )
+                        return
+                      void workouts
+                        .discardLocalChanges(session.id)
+                        .then(() => navigate('/train', { replace: true }))
+                        .catch((failure) =>
+                          setRecoveryError(
+                            failure instanceof Error
+                              ? failure.message
+                              : 'This recovery copy could not be cleared.',
+                          ),
+                        )
+                    }}
+                  >
+                    Use cloud version
+                  </button>
+                </div>
+              ))}
+              {workouts.unreadableCount > 0 && (
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Clear unreadable local workout records? Download workout recovery before clearing them. Valid checkpoints and cloud workouts are preserved.',
+                      )
+                    )
+                      void workouts
+                        .clearUnreadableRecovery()
+                        .catch((failure) =>
+                          setRecoveryError(
+                            failure instanceof Error
+                              ? failure.message
+                              : 'Unreadable records could not be cleared.',
+                          ),
+                        )
+                  }}
+                >
+                  Clear unreadable workout copies
+                </button>
+              )}
+              {recoveryError && <p role="alert">{recoveryError}</p>}
+            </section>
+          )}
           {error && (
             <div className="notice sync-error" role="alert">
               <span>{error}</span>
@@ -203,7 +299,9 @@ export default function AppShell() {
             key={to}
             to={to}
             className={({ isActive }) =>
-              isActive || (to === '/plan' && location.pathname.startsWith('/exercises'))
+              isActive ||
+              (to === '/plan' && location.pathname.startsWith('/exercises')) ||
+              (to === '/train' && location.pathname.startsWith('/history'))
                 ? 'active'
                 : undefined
             }

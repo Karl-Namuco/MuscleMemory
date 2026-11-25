@@ -773,6 +773,20 @@ textarea.input {
 .mobile-navigation {
   display: none;
 }
+.workout-global-banner,
+.workout-recovery-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.workout-global-banner {
+  justify-content: space-between;
+}
+.workout-global-banner p {
+  margin: 7px 0 0;
+}
 .skip-link {
   position: fixed;
   top: 8px;
