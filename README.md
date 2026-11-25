@@ -1,8 +1,8 @@
 # Muscle Memory
 
-An iPhone-first fitness PWA built around one question: “What should I train next?”
+An adaptive fitness PWA for desktop, tablet, and mobile, built around one question: “What should I train next?”
 
-Version 0.1 implements the Phase 1 foundation: private email/password accounts, administrator approval, five-step onboarding with local draft recovery, editable profile preferences, responsive navigation, and an initial production PWA shell. Plan, Train, and Progress explain upcoming features; they do not schedule or log workouts yet.
+The application includes the account foundation and Phase 2 training configuration: an exercise library, custom exercises, routine building with planned sets and supersets, editable split templates, ordered training/rest slots, and an active-plan overview. Configuration has account-scoped drafts, offline saves, cloud confirmation, and recovery controls. Workout logging, scheduling, and analytics remain upcoming work.
 
 ## Run locally
 
@@ -71,4 +71,4 @@ The application targets Firebase Authentication, Firestore, and standard Firebas
 - [Development roadmap](./docs/roadmap.md)
 - [Testing](./docs/testing.md)
 
-Workout logging, routines, adaptive recommendations, analytics, data export, and account deletion remain future phases. Browser storage is recoverable working state, not a guaranteed backup.
+Workout logging, adaptive recommendations, analytics, complete data export, and account deletion remain future phases. Browser storage is recoverable working state, not a guaranteed backup.

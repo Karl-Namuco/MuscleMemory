@@ -1,6 +1,6 @@
 # Development roadmap
 
-Only Phase 1 has been authorized for implementation. Each major phase ends with relevant executed checks and a review before proceeding. Deployment is a separate approval step.
+Phases 1 and 2 have been authorized for implementation. Phase 2 includes exercises, routines, and splits with balanced desktop, tablet, and mobile layouts. Each major phase ends with relevant executed checks and a review before proceeding. Workout logging is the next phase; deployment is a separate approval step.
 
 | Phase                      | Scope                                                                                                         | Acceptance gate                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |

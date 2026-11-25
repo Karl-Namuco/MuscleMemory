@@ -6,5 +6,6 @@ export default defineConfig({
     include: ['tests/**/*.test.{ts,tsx}'],
     exclude: ['tests/**/*.rules.test.ts'],
     restoreMocks: true,
+    fileParallelism: false,
   },
 })

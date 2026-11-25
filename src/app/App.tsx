@@ -112,7 +112,13 @@ export default function App() {
             <Route element={<RequireAccount />}>
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route element={<RequireOnboarding />}>
-                <Route element={<TrainingProvider><AppShell /></TrainingProvider>}>
+                <Route
+                  element={
+                    <TrainingProvider>
+                      <AppShell />
+                    </TrainingProvider>
+                  }
+                >
                   <Route index element={<Navigate to="/today" replace />} />
                   <Route path="/today" element={<TodayPage />} />
                   <Route path="/plan" element={<PlanPage />} />

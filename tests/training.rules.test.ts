@@ -14,12 +14,16 @@ import {
   doc,
   getDoc,
   getDocs,
-  setDoc,
-  updateDoc,
+  setDoc as rawSetDoc,
+  updateDoc as rawUpdateDoc,
   writeBatch,
+  type DocumentData,
+  type DocumentReference,
+  type WriteBatch,
 } from 'firebase/firestore'
 import { EXERCISES } from '../src/data/exercises'
 import { createPlannedSet, createRoutineExercise } from '../src/domain/training/helpers'
+import { routineValidationPages } from '../src/domain/training/validationPages'
 import {
   MUSCLE_GROUPS,
   type Exercise,
@@ -31,6 +35,26 @@ import {
 let environment: RulesTestEnvironment
 const userDb = (uid = 'alex') => environment.authenticatedContext(uid).firestore()
 type Database = ReturnType<typeof userDb>
+function addRoutinePages(batch: WriteBatch, reference: DocumentReference, value: Routine) {
+  for (const page of routineValidationPages(value))
+    batch.set(doc(reference, 'validationPages', page.id), page.value)
+}
+async function setDoc(reference: DocumentReference, value: DocumentData) {
+  if (reference.parent.id !== 'routines') return rawSetDoc(reference, value)
+  const batch = writeBatch(reference.firestore)
+  batch.set(reference, value)
+  addRoutinePages(batch, reference, value as Routine)
+  return batch.commit()
+}
+async function updateDoc(reference: DocumentReference, fields: DocumentData) {
+  if (reference.parent.id !== 'routines') return rawUpdateDoc(reference, fields)
+  const snapshot = await getDoc(reference)
+  const value = { ...snapshot.data(), ...fields }
+  const batch = writeBatch(reference.firestore)
+  batch.update(reference, fields)
+  addRoutinePages(batch, reference, value as Routine)
+  return batch.commit()
+}
 const paths = ['customExercises', 'routines', 'splits'] as const
 const metadata = (id: string, ownerId = 'alex'): RecordMetadata => ({
   id,
@@ -102,8 +126,10 @@ async function approve(...uids: string[]) {
 }
 async function seed(db = userDb()) {
   const batch = writeBatch(db)
+  const planned = routine()
   batch.set(reference(db, 'customExercises', 'exercise-one'), exercise())
-  batch.set(reference(db, 'routines', 'routine-one'), routine())
+  batch.set(reference(db, 'routines', 'routine-one'), planned)
+  addRoutinePages(batch, reference(db, 'routines', 'routine-one'), planned)
   batch.set(reference(db, 'splits', 'split-one'), split())
   await batch.commit()
 }
@@ -373,6 +399,7 @@ describe('private training configuration rules', () => {
         ...createRoutineExercise(fixtureExercise),
         sets: Array.from({ length: 12 }, () => createPlannedSet('weight-reps')),
         notes: 'x'.repeat(1000),
+        supersetGroup: 'A',
       })),
     }
     const maximumSplit: TrainingSplit = {
@@ -389,6 +416,21 @@ describe('private training configuration rules', () => {
     const storedRoutine = await getDoc(reference(db, 'routines', maximumRoutine.id))
     expect(storedRoutine.data()?.exercises).toHaveLength(20)
     expect(storedRoutine.data()?.exercises[19].sets).toHaveLength(12)
+    for (const invalid of [
+      { id: '' },
+      { exerciseId: 'invalid/id' },
+      { notes: 'x'.repeat(1001) },
+      { supersetGroup: '' },
+      { exerciseSnapshot: { ...maximumRoutine.exercises[19].exerciseSnapshot, unexpected: true } },
+    ])
+      await assertFails(
+        updateDoc(reference(db, 'routines', maximumRoutine.id), {
+          ...next(maximumRoutine),
+          exercises: maximumRoutine.exercises.map((entry, index) =>
+            index === 19 ? { ...entry, ...invalid } : entry,
+          ),
+        }),
+      )
     await assertFails(
       updateDoc(reference(db, 'routines', maximumRoutine.id), {
         ...next(maximumRoutine),
@@ -406,6 +448,41 @@ describe('private training configuration rules', () => {
           index === 11 ? { ...slot, isRestDay: true } : slot,
         ),
       }),
+    )
+  })
+
+  it('requires atomically validated pages bound to the complete routine mutation', async () => {
+    await approve('alex')
+    const db = userDb()
+    const planned = routine()
+    const ref = reference(db, 'routines', planned.id)
+    await assertFails(rawSetDoc(ref, planned))
+    const page = routineValidationPages(planned)[0]
+    const incomplete = writeBatch(db)
+    incomplete.set(ref, planned)
+    incomplete.set(doc(ref, 'validationPages', page.id), { ...page.value, mutationId: 'different' })
+    await assertFails(incomplete.commit())
+    const mismatch = writeBatch(db)
+    mismatch.set(ref, planned)
+    mismatch.set(doc(ref, 'validationPages', page.id), {
+      ...page.value,
+      exercises: [{ ...planned.exercises[0], notes: 'Different content' }],
+    })
+    await assertFails(mismatch.commit())
+    await assertSucceeds(setDoc(ref, planned))
+    await assertFails(rawUpdateDoc(ref, { ...next(planned), name: 'Unvalidated update' }))
+    await assertFails(
+      rawSetDoc(doc(ref, 'validationPages', 'p0'), {
+        ...page.value,
+        exercises: [{ ...planned.exercises[0], notes: 'Standalone replacement' }],
+      }),
+    )
+    await assertFails(getDoc(doc(ref, 'validationPages', 'p0')))
+    await assertFails(deleteDoc(doc(ref, 'validationPages', 'p0')))
+    await assertFails(
+      getDoc(
+        doc(userDb('other'), 'users', 'alex', 'routines', planned.id, 'validationPages', 'p0'),
+      ),
     )
   })
 

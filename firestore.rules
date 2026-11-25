@@ -110,54 +110,79 @@ service cloud.firestore {
         && value.trackingType in ['weight-reps', 'reps', 'assisted-reps', 'duration', 'distance-duration']
         && value.alternativeIds is list && value.alternativeIds.size() <= 10 && stringWithin(value.notes, 0, 1000);
     }
-    function routineEntry(value) {
+    function routineEntry(value, entryKeys) {
+      let entry = value;
+      let sets = value.sets;
+      let count = sets.size();
+      let rest = value.restSeconds;
+      let group = value.supersetGroup;
       // Deep set/snapshot validation happens in the strict runtime schemas on every
       // read and write. These rules bound every entry and nested set list while
       // remaining within Firestore's expression budget for 20 x 12-set routines.
-      return value is map
-        && value.keys().hasOnly(['id', 'exerciseId', 'exerciseSnapshot', 'sets', 'restSeconds', 'notes', 'optional', 'supersetGroup'])
-        && value.id is string && value.id.matches('^[\\s\\S]{1,128}$')
-        && value.exerciseId is string && value.exerciseId.matches('^[\\s\\S]{1,128}$')
-        && value.exerciseSnapshot is map && value.exerciseSnapshot.keys().hasOnly(['name', 'trackingType', 'primaryMuscles', 'secondaryMuscles', 'equipment', 'movementPattern'])
-        && value.sets is list && value.sets.size() >= 1 && value.sets.size() <= 12
-        && value.restSeconds is int && value.restSeconds >= 0 && value.restSeconds <= 1800
-        && value.notes is string && value.notes.matches('^[\\s\\S]{0,1000}$') && value.optional is bool
-        && (value.supersetGroup == null || (value.supersetGroup is string && value.supersetGroup.matches('^[\\s\\S]{1,128}$')));
+      return entry.keys().hasOnly(entryKeys)
+        && entry.id.matches('^[A-Za-z0-9_-]{1,128}$')
+        && entry.exerciseId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && entry.exerciseSnapshot.keys().hasOnly(['name', 'trackingType', 'primaryMuscles', 'secondaryMuscles', 'equipment', 'movementPattern'])
+        && sets is list && count >= 1 && count <= 12
+        && rest is int && rest >= 0 && rest <= 1800
+        && entry.notes.matches('^[\\s\\S]{0,1000}$') && entry.optional is bool
+        && (group == null || group.matches('^[A-Za-z0-9_-]{1,128}$'));
     }
     function routineEntries(values) {
+      let entryKeys = ['id', 'exerciseId', 'exerciseSnapshot', 'sets', 'restSeconds', 'notes', 'optional', 'supersetGroup'];
       let n = values.size();
-      return values is list && n >= 1 && n <= 20
-        && (n < 1 || routineEntry(values[0])) && (n < 2 || routineEntry(values[1]))
-        && (n < 3 || routineEntry(values[2])) && (n < 4 || routineEntry(values[3]))
-        && (n < 5 || routineEntry(values[4])) && (n < 6 || routineEntry(values[5]))
-        && (n < 7 || routineEntry(values[6])) && (n < 8 || routineEntry(values[7]))
-        && (n < 9 || routineEntry(values[8])) && (n < 10 || routineEntry(values[9]))
-        && (n < 11 || routineEntry(values[10])) && (n < 12 || routineEntry(values[11]))
-        && (n < 13 || routineEntry(values[12])) && (n < 14 || routineEntry(values[13]))
-        && (n < 15 || routineEntry(values[14])) && (n < 16 || routineEntry(values[15]))
-        && (n < 17 || routineEntry(values[16])) && (n < 18 || routineEntry(values[17]))
-        && (n < 19 || routineEntry(values[18])) && (n < 20 || routineEntry(values[19]));
+      return values is list && n >= 1 && n <= 6
+        && (n < 1 || routineEntry(values[0], entryKeys)) && (n < 2 || routineEntry(values[1], entryKeys))
+        && (n < 3 || routineEntry(values[2], entryKeys)) && (n < 4 || routineEntry(values[3], entryKeys))
+        && (n < 5 || routineEntry(values[4], entryKeys)) && (n < 6 || routineEntry(values[5], entryKeys));
+    }
+    function routinePage(value, pageId, expectedSize) {
+      let page = getAfter(/databases/$(database)/documents/users/$(value.ownerId)/routines/$(value.id)/validationPages/$(pageId)).data;
+      return page.ownerId == value.ownerId && page.routineId == value.id
+        && page.mutationId == value.mutationId && page.revision == value.revision
+        && page.exercises.size() == expectedSize ? page.exercises : [];
+    }
+    function validatedRoutineExercises(value) {
+      let n = value.exercises.size();
+      let first = routinePage(value, 'p0', n > 6 ? 6 : n);
+      let second = n > 6 ? routinePage(value, 'p1', n > 12 ? 6 : n - 6) : [];
+      let third = n > 12 ? routinePage(value, 'p2', n > 18 ? 6 : n - 12) : [];
+      let fourth = n > 18 ? routinePage(value, 'p3', n - 18) : [];
+      // Each page is independently validated in this same atomic batch. Matching
+      // the complete ordered array to pages bound to this exact mutation keeps
+      // all entry checks within Firestore's per-write expression budget.
+      return value.exercises is list && n >= 1 && n <= 20
+        && value.exercises == first.concat(second).concat(third).concat(fourth);
     }
     function validRoutine(value) {
       return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'name', 'description', 'targetMuscles', 'exercises'])
         && stringWithin(value.name, 1, 120) && stringWithin(value.description, 0, 1000)
-        && trainingMuscles(value.targetMuscles) && routineEntries(value.exercises);
+        && trainingMuscles(value.targetMuscles) && validatedRoutineExercises(value);
     }
-    function validSlot(value, uid) {
-      return value is map && value.keys().hasAll(['id', 'label', 'routineId', 'isRestDay'])
-        && value.keys().hasOnly(['id', 'label', 'routineId', 'isRestDay'])
-        && stringWithin(value.id, 1, 128) && stringWithin(value.label, 1, 80) && value.isRestDay is bool
-        && (value.isRestDay ? value.routineId == null : stringWithin(value.routineId, 1, 128));
+    function validRoutinePage(value, uid, routineId, pageId) {
+      let parent = getAfter(/databases/$(database)/documents/users/$(uid)/routines/$(routineId)).data;
+      return pageId in ['p0', 'p1', 'p2', 'p3']
+        && value.keys().hasOnly(['ownerId', 'routineId', 'mutationId', 'revision', 'exercises'])
+        && value.ownerId == uid && value.routineId == routineId
+        && value.mutationId == parent.mutationId && value.revision == parent.revision
+        && parent.ownerId == uid && routineEntries(value.exercises);
+    }
+    function validSlot(value, keys) {
+      return value.keys().hasAll(keys) && value.keys().hasOnly(keys)
+        && value.id.matches('^[A-Za-z0-9_-]{1,128}$')
+        && value.label.matches('^[\\s\\S]{1,80}$') && value.isRestDay is bool
+        && (value.isRestDay ? value.routineId == null : value.routineId.matches('^[A-Za-z0-9_-]{1,128}$'));
     }
     function splitSlots(values, uid) {
+      let keys = ['id', 'label', 'routineId', 'isRestDay'];
       let n = values.size();
       return values is list && n >= 1 && n <= 12
-        && (n < 1 || validSlot(values[0], uid)) && (n < 2 || validSlot(values[1], uid))
-        && (n < 3 || validSlot(values[2], uid)) && (n < 4 || validSlot(values[3], uid))
-        && (n < 5 || validSlot(values[4], uid)) && (n < 6 || validSlot(values[5], uid))
-        && (n < 7 || validSlot(values[6], uid)) && (n < 8 || validSlot(values[7], uid))
-        && (n < 9 || validSlot(values[8], uid)) && (n < 10 || validSlot(values[9], uid))
-        && (n < 11 || validSlot(values[10], uid)) && (n < 12 || validSlot(values[11], uid));
+        && (n < 1 || validSlot(values[0], keys)) && (n < 2 || validSlot(values[1], keys))
+        && (n < 3 || validSlot(values[2], keys)) && (n < 4 || validSlot(values[3], keys))
+        && (n < 5 || validSlot(values[4], keys)) && (n < 6 || validSlot(values[5], keys))
+        && (n < 7 || validSlot(values[6], keys)) && (n < 8 || validSlot(values[7], keys))
+        && (n < 9 || validSlot(values[8], keys)) && (n < 10 || validSlot(values[9], keys))
+        && (n < 11 || validSlot(values[10], keys)) && (n < 12 || validSlot(values[11], keys));
     }
     function validSplit(value, uid) {
       return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'name', 'description', 'mode', 'slots'])
@@ -217,6 +242,12 @@ service cloud.firestore {
         allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validRoutine(request.resource.data)
           && (!request.resource.data.archived || canArchiveRoutine(uid, id));
         allow delete: if false;
+        match /validationPages/{pageId} {
+          allow read, delete: if false;
+          allow create: if approved(uid) && validRoutinePage(request.resource.data, uid, id, pageId);
+          allow update: if approved(uid) && request.resource.data.mutationId != resource.data.mutationId
+            && validRoutinePage(request.resource.data, uid, id, pageId);
+        }
       }
       match /splits/{id} {
         allow get, list: if approved(uid);

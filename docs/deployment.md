@@ -15,7 +15,7 @@ Use a Firebase project on Spark with Authentication, Firestore, and standard Hos
 3. Copy [`.env.example`](../.env.example) to a local environment file. Set `VITE_USE_EMULATORS=false` and supply all six documented Firebase web config values.
 4. Configure the intended Authentication authorized domains.
 5. Review and validate [Firestore rules](../firestore.rules), [indexes](../firestore.indexes.json), and [Hosting configuration](../firebase.json).
-6. Run the foundation checks, rules tests, and browser tests. Build using the intended production environment and inspect the production bundle.
+6. Run the account and training configuration checks, rules tests, and browser tests. Build using the intended production environment and inspect the production bundle. Routine writes include internal validation pages; publish the compatible client and rules together.
 7. Obtain deployment approval before publishing rules, indexes, or Hosting assets.
 
 Vite embeds `VITE_` values into the client bundle. Firebase web configuration is public client configuration; never place service-account keys, administrator credentials, or other privileged secrets in those variables or the repository.

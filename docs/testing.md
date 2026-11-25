@@ -2,7 +2,18 @@
 
 Test files and commands describe repeatable checks. A passing result must be observed from execution; this document does not certify that every check has passed on a particular machine or commit.
 
-## Verification on 2026-11-25
+## Training configuration verification on 2026-11-25
+
+- Lint, all 49 unit/component tests, TypeScript checking, and the production build passed. Unit test files run serially to keep DOM-heavy component checks reliable on the development machine.
+- All 22 Firestore emulator rules tests passed. Coverage includes ownership/approval, revision conflicts, atomic active-split deactivation, maximum 20-exercise/12-set routines and 12-slot splits, invalid final entries, and rejection of missing or mismatched validation pages.
+- All 6 browser tests passed across desktop Chromium and mobile WebKit. The new training flow creates an exercise and routine, recovers a reordered split draft, activates a split, verifies the Plan overview, saves while offline and confirms synchronization, archives/restores a split while preserving its routines, and adds a template.
+- Desktop, tablet (834 px), mobile, and 320 px split-editor screenshots were inspected. Horizontal overflow assertions passed, including a 120-character split name. Dialog focus restoration and starting a fresh split after a confirmed creation were checked.
+- The existing approximately 548 kB Firestore SDK bundle warning remains; the production build and PWA generation succeed.
+- No production deployment or physical-device installation test was performed.
+
+The [training browser test](../tests/e2e/training.spec.ts), [split component tests](../tests/splits.test.tsx), [routine tests](../tests/routines.test.tsx), [exercise tests](../tests/exercises.test.tsx), [domain tests](../tests/training-domain.test.ts), and [training rules tests](../tests/training.rules.test.ts) contain the repeatable checks. Client writes include bounded validation records atomically with each full routine; the rules suite exercises both the valid path and attempts to bypass it.
+
+## Earlier foundation verification on 2026-11-25
 
 - `npm run check`: lint, 21 unit/component tests, TypeScript, and production build passed.
 - Firestore emulator rules suite: 9 tests passed, including approval enforcement, cross-user isolation, all supported exercise-name entries, and atomic onboarding saves.
@@ -37,6 +48,8 @@ Browser tests use desktop Chromium and an iPhone 13 Pro Max WebKit device profil
 Rules tests start their own Firestore emulator and stop it afterward. Stop a development emulator before running them, then restart both development emulators for browser tests.
 
 WebKit reports cancelled Firestore fetches as errors when leaving a document. The browser test retains these as a JSON attachment only when the exact local Firestore channel signature occurs inside an explicit awaited reload or sign-out navigation. The sign-out window ends after the login URL and heading are confirmed. Every other page error, including the same message during normal use, fails the test. This follows the [Firebase maintainer explanation](https://github.com/firebase/firebase-js-sdk/issues/3708); cloud-confirmed saves and post-reload persistence are still asserted.
+
+The training browser test retains the same exact local-channel diagnostic during its explicit document navigations and intentional offline/reconnect interval. Other page errors still fail. The test confirms that recovery records disappear and the backend receives the edited split after reconnecting.
 
 ## Manual checks before release
 

@@ -76,6 +76,9 @@ beforeEach(() => {
     error: null,
     hasPendingWrites: false,
     fromCache: false,
+    recoveryCount: 0,
+    downloadRecovery: vi.fn(),
+    discardRejectedChanges: vi.fn(),
     saveCustomExercise: vi.fn(),
     archiveCustomExercise: vi.fn(),
     saveRoutine: vi.fn().mockResolvedValue('created-routine'),
@@ -91,6 +94,20 @@ beforeEach(() => {
 })
 
 describe('Routine builder', () => {
+  it('keeps the latest edit when navigation happens immediately', async () => {
+    const view = renderEditor(`/plan/routines/new?exercise=${bench.id}`)
+    const name = await screen.findByLabelText('Routine name')
+    fireEvent.change(name, { target: { value: 'Keep this last edit' } })
+    view.unmount()
+    await waitFor(() =>
+      expect(mock.saveDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({ name: 'Keep this last edit' }),
+        }),
+      ),
+    )
+  })
+
   it('validates rep ranges before saving while preserving the exercise snapshot', async () => {
     const user = userEvent.setup()
     renderEditor(`/plan/routines/new?exercise=${bench.id}`)

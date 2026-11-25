@@ -7,18 +7,198 @@ import '../plan/plan.css'
 
 export function TrainPage() {
   const { routines, loading } = useTraining()
-  const available = routines.filter(routine => !routine.archived)
-  return <div className="page-enter"><PageTitle eyebrow="Make your next move" title="Show up. Start somewhere." description="Your routines are ready to review and refine."/>
-    <p className="notice">Your training setup is available now. Set logging and workout sessions are the next development phase.</p>
-    <div className="section-label-row" style={{marginTop:28}}><h2 className="section-heading">Your routine library</h2><Link className="text-link" to="/plan/routines">Manage routines</Link></div>
-    {loading ? <p className="muted" role="status">Loading your routines…</p> : available.length ? <div className="plan-routine-grid">{available.map(routine => <Link className="card plan-routine-card" to={'/plan/routines/'+routine.id} key={routine.id}><Dumbbell size={22}/><h3>{routine.name}</h3><p>{routine.exercises.length} exercises · {routine.exercises.reduce((sum,exercise) => sum+exercise.sets.length,0)} planned sets</p><span className="subtle-caption">About {estimatedRoutineMinutes(routine.exercises)} min · estimate</span><span className="text-link">Review routine</span></Link>)}</div> : <section className="empty-training card"><div className="empty-icon"><Dumbbell size={40} strokeWidth={1.2}/></div><h2>A fresh training canvas.</h2><p>Choose your exercises and plan a routine. Your workout tracker will follow in Phase 3.</p><Link className="btn btn-primary" to="/plan/routines/new"><Plus size={17}/> Build your first routine</Link></section>}
-  </div>
+  const available = routines.filter((routine) => !routine.archived)
+  return (
+    <div className="page-enter">
+      <PageTitle
+        eyebrow="Make your next move"
+        title="Show up. Start somewhere."
+        description="Your routines are ready to review and refine."
+      />
+      <p className="notice">
+        Your training setup is available now. Set logging and workout sessions are the next
+        development phase.
+      </p>
+      <div className="section-label-row" style={{ marginTop: 28 }}>
+        <h2 className="section-heading">Your routine library</h2>
+        <Link className="text-link" to="/plan/routines">
+          Manage routines
+        </Link>
+      </div>
+      {loading ? (
+        <p className="muted" role="status">
+          Loading your routines…
+        </p>
+      ) : available.length ? (
+        <div className="plan-routine-grid">
+          {available.map((routine) => (
+            <Link
+              className="card plan-routine-card"
+              to={'/plan/routines/' + routine.id}
+              key={routine.id}
+            >
+              <Dumbbell size={22} />
+              <h3>{routine.name}</h3>
+              <p>
+                {routine.exercises.length} exercises ·{' '}
+                {routine.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0)} planned
+                sets
+              </p>
+              <span className="subtle-caption">
+                About {estimatedRoutineMinutes(routine.exercises)} min · estimate
+              </span>
+              <span className="text-link">Review routine</span>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <section className="empty-training card">
+          <div className="empty-icon">
+            <Dumbbell size={40} strokeWidth={1.2} />
+          </div>
+          <h2>A fresh training canvas.</h2>
+          <p>
+            Choose your exercises and plan a routine. Your workout tracker will follow in Phase 3.
+          </p>
+          <Link className="btn btn-primary" to="/plan/routines/new">
+            <Plus size={17} /> Build your first routine
+          </Link>
+        </section>
+      )}
+    </div>
+  )
 }
 export function ProgressPage() {
-  return <div className="page-enter"><PageTitle eyebrow="Every session adds up" title="Your story, in progress." description="Meaningful progress starts with real training."/><section className="empty-training card"><div className="empty-icon"><Activity size={40} strokeWidth={1.2}/></div><h2>Your first chapter is ahead.</h2><p>There are no logged workouts yet. Workout history, personal records, and muscle insights will appear here as those features are implemented and you start training.</p><Link className="btn btn-secondary" to="/plan"><Target size={17}/> Review your training plan</Link></section><div className="honest-note"><ShieldCheck size={18}/><p>Your progress will be based on actual completed sets. No invented scores, streaks, or recovery percentages.</p></div></div>
+  return (
+    <div className="page-enter">
+      <PageTitle
+        eyebrow="Every session adds up"
+        title="Your story, in progress."
+        description="Meaningful progress starts with real training."
+      />
+      <section className="empty-training card">
+        <div className="empty-icon">
+          <Activity size={40} strokeWidth={1.2} />
+        </div>
+        <h2>Your first chapter is ahead.</h2>
+        <p>
+          There are no logged workouts yet. Workout history, personal records, and muscle insights
+          will appear here as those features are implemented and you start training.
+        </p>
+        <Link className="btn btn-secondary" to="/plan">
+          <Target size={17} /> Review your training plan
+        </Link>
+      </section>
+      <div className="honest-note">
+        <ShieldCheck size={18} />
+        <p>
+          Your progress will be based on actual completed sets. No invented scores, streaks, or
+          recovery percentages.
+        </p>
+      </div>
+    </div>
+  )
 }
 export function SettingsPage() {
-  return <div className="page-enter"><PageTitle eyebrow="Make yourself at home" title="A little peace of mind." description="Your application, your data, your device."/><div className="settings-grid"><section className="card"><span className="card-icon"><Smartphone size={24}/></span><h2 className="section-heading">On the screen that suits you.</h2><p className="muted">Muscle Memory works in a browser on desktop, tablet, and mobile. You can also install the production application where your browser supports it.</p><ol className="installation-steps"><li><strong>Desktop:</strong> use your browser’s Install application action, when offered.</li><li><strong>Android:</strong> open the browser menu and choose Install app or Add to Home screen.</li><li><strong>iPhone or iPad:</strong> in Safari, tap Share, then Add to Home Screen.</li></ol><p className="subtle-caption">Installation and offline application assets require a production build served over HTTPS. Local development uses the browser.</p></section><section className="card"><h2 className="section-heading">Private by design.</h2><p className="muted">Your exercises, routines, splits, and preferences belong to your account. Database rules enforce account isolation.</p><p className="muted">Browser storage can be cleared by your device. A local save is only confirmed in the cloud after synchronization.</p><Dialog.Root><Dialog.Trigger asChild><button className="btn btn-secondary">About this release</button></Dialog.Trigger><Dialog.Portal><Dialog.Overlay className="dialog-overlay"/><Dialog.Content className="dialog-content"><Dialog.Title>Your training setup, ready.</Dialog.Title><Dialog.Description>Version 0.2 · Training configuration. Browse exercises, create your own, build routines, and choose an active split. Workout logging, adaptive recommendations, analytics, complete data export, and account deletion follow in the next phases.</Dialog.Description><Dialog.Close asChild><button className="btn btn-primary">Got it</button></Dialog.Close></Dialog.Content></Dialog.Portal></Dialog.Root></section></div><Link to="/profile" className="text-link">Return to profile</Link></div>
+  return (
+    <div className="page-enter">
+      <PageTitle
+        eyebrow="Make yourself at home"
+        title="A little peace of mind."
+        description="Your application, your data, your device."
+      />
+      <div className="settings-grid">
+        <section className="card">
+          <span className="card-icon">
+            <Smartphone size={24} />
+          </span>
+          <h2 className="section-heading">On the screen that suits you.</h2>
+          <p className="muted">
+            Muscle Memory works in a browser on desktop, tablet, and mobile. You can also install
+            the production application where your browser supports it.
+          </p>
+          <ol className="installation-steps">
+            <li>
+              <strong>Desktop:</strong> use your browser’s Install application action, when offered.
+            </li>
+            <li>
+              <strong>Android:</strong> open the browser menu and choose Install app or Add to Home
+              screen.
+            </li>
+            <li>
+              <strong>iPhone or iPad:</strong> in Safari, tap Share, then Add to Home Screen.
+            </li>
+          </ol>
+          <p className="subtle-caption">
+            Installation and offline application assets require a production build served over
+            HTTPS. Local development uses the browser.
+          </p>
+        </section>
+        <section className="card">
+          <h2 className="section-heading">Private by design.</h2>
+          <p className="muted">
+            Your exercises, routines, splits, and preferences belong to your account. Database rules
+            enforce account isolation.
+          </p>
+          <p className="muted">
+            Browser storage can be cleared by your device. A local save is only confirmed in the
+            cloud after synchronization.
+          </p>
+          <Dialog.Root>
+            <Dialog.Trigger asChild>
+              <button className="btn btn-secondary">About this release</button>
+            </Dialog.Trigger>
+            <Dialog.Portal>
+              <Dialog.Overlay className="dialog-overlay" />
+              <Dialog.Content className="dialog-content">
+                <Dialog.Title>Your training setup, ready.</Dialog.Title>
+                <Dialog.Description>
+                  Version 0.2 · Training configuration. Browse exercises, create your own, build
+                  routines, and choose an active split. Workout logging, adaptive recommendations,
+                  analytics, complete data export, and account deletion follow in the next phases.
+                </Dialog.Description>
+                <Dialog.Close asChild>
+                  <button className="btn btn-primary">Got it</button>
+                </Dialog.Close>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+        </section>
+      </div>
+      <Link to="/profile" className="text-link">
+        Return to profile
+      </Link>
+    </div>
+  )
 }
-export function NotFoundPage() {return <div className="empty-training"><Layers3 size={36}/><h1 className="page-heading">A little off track.</h1><p className="muted">This page could not be found.</p><Link className="btn btn-primary" to="/today">Back to Today</Link></div>}
-function PageTitle({eyebrow,title,description}:{eyebrow:string;title:string;description:string}) {return <div className="page-title-row"><div><p className="eyebrow">{eyebrow}</p><h1 className="page-heading">{title}</h1><p className="page-description">{description}</p></div></div>}
+export function NotFoundPage() {
+  return (
+    <div className="empty-training">
+      <Layers3 size={36} />
+      <h1 className="page-heading">A little off track.</h1>
+      <p className="muted">This page could not be found.</p>
+      <Link className="btn btn-primary" to="/today">
+        Back to Today
+      </Link>
+    </div>
+  )
+}
+function PageTitle({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string
+  title: string
+  description: string
+}) {
+  return (
+    <div className="page-title-row">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h1 className="page-heading">{title}</h1>
+        <p className="page-description">{description}</p>
+      </div>
+    </div>
+  )
+}

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation, Link } from 'react-router-dom'
 import {
   CalendarDays,
@@ -29,6 +29,7 @@ const links = [
 export default function AppShell() {
   const { account, error, refreshAccess } = useAuth()
   const training = useTraining()
+  const [recoveryError, setRecoveryError] = useState('')
   const online = useOnline()
   const location = useLocation()
   useEffect(() => {
@@ -41,8 +42,14 @@ export default function AppShell() {
       ? 'Saved locally · sync pending'
       : account?.fromCache || training.fromCache
         ? 'Showing cached data'
-        : training.loading ? 'Loading training setup' : 'Changes synced'
-  const SyncIcon = !online ? WifiOff : account?.hasPendingWrites || training.hasPendingWrites ? CloudUpload : CloudCheck
+        : training.loading
+          ? 'Loading training setup'
+          : 'Changes synced'
+  const SyncIcon = !online
+    ? WifiOff
+    : account?.hasPendingWrites || training.hasPendingWrites
+      ? CloudUpload
+      : CloudCheck
   return (
     <div className="app-shell">
       <a className="skip-link" href="#page-content">
@@ -53,7 +60,15 @@ export default function AppShell() {
         <div className="sidebar-section-label">Your training space</div>
         <nav className="desktop-navigation" aria-label="Main navigation">
           {links.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({isActive}) => isActive || (to === '/plan' && location.pathname.startsWith('/exercises')) ? 'active' : undefined}>
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                isActive || (to === '/plan' && location.pathname.startsWith('/exercises'))
+                  ? 'active'
+                  : undefined
+              }
+            >
               <Icon size={20} strokeWidth={1.7} />
               <span>{label}</span>
               {to === '/train' && <span className="nav-training-dot" />}
@@ -116,7 +131,65 @@ export default function AppShell() {
               </button>
             </div>
           )}
-          {training.error && <div className="notice sync-error" role="alert"><span>{training.error}</span><button className="btn btn-secondary" onClick={training.refresh}>Try again</button></div>}
+          {training.error && (
+            <div className="notice sync-error" role="alert">
+              <span>{training.error}</span>
+              <button className="btn btn-secondary" onClick={training.refresh}>
+                Try again
+              </button>
+            </div>
+          )}
+          {training.recoveryCount > 0 && (
+            <section className="notice" aria-label="Training save recovery">
+              <p>
+                {training.recoveryCount} training changes on this device are awaiting cloud
+                confirmation. You can download a recovery copy before resolving rejected saves.
+              </p>
+              <div className="record-actions">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    try {
+                      training.downloadRecovery()
+                      setRecoveryError('')
+                    } catch (failure) {
+                      setRecoveryError(
+                        failure instanceof Error
+                          ? failure.message
+                          : 'The recovery copy could not be downloaded.',
+                      )
+                    }
+                  }}
+                >
+                  Download recovery copy
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        'Clear rejected training saves from this device? Download a recovery copy first if you need it. Editor drafts and cloud records are preserved.',
+                      )
+                    )
+                      return
+                    try {
+                      training.discardRejectedChanges()
+                      setRecoveryError('')
+                    } catch (failure) {
+                      setRecoveryError(
+                        failure instanceof Error
+                          ? failure.message
+                          : 'These saves could not be cleared.',
+                      )
+                    }
+                  }}
+                >
+                  Clear rejected saves
+                </button>
+              </div>
+              {recoveryError && <p role="alert">{recoveryError}</p>}
+            </section>
+          )}
           <Outlet />
         </main>
         <footer className="desktop-footer">
@@ -126,7 +199,15 @@ export default function AppShell() {
       </div>
       <nav className="mobile-navigation" aria-label="Mobile navigation">
         {links.map(({ to, label, icon: Icon }) => (
-          <NavLink key={to} to={to} className={({isActive}) => isActive || (to === '/plan' && location.pathname.startsWith('/exercises')) ? 'active' : undefined}>
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              isActive || (to === '/plan' && location.pathname.startsWith('/exercises'))
+                ? 'active'
+                : undefined
+            }
+          >
             <Icon size={21} strokeWidth={1.7} />
             <span>{label}</span>
           </NavLink>

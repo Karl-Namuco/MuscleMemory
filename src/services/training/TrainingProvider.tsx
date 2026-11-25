@@ -14,6 +14,7 @@ import { ZodError } from 'zod'
 import { EXERCISES } from '../../data/exercises'
 import { SPLIT_TEMPLATES } from '../../data/splitTemplates'
 import { createRoutineExercise } from '../../domain/training/helpers'
+import { routineValidationPages } from '../../domain/training/validationPages'
 import {
   customExerciseInputSchema,
   customExerciseSchema,
@@ -291,6 +292,10 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
             observed.current.delete(key)
           }
         }
+      // Removing recovery/reference listeners also removes their stale metadata.
+      // Recompute after cleanup so a retired pending snapshot cannot keep the
+      // sync indicator (or sign-out guard) stuck after backend acknowledgement.
+      reconcileRecovery()
     }
     for (const collectionName of ['customExercises', 'routines', 'splits'] as const) {
       stops.push(
@@ -458,6 +463,20 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
         doc(getFirebaseServices().db, 'users', ownerId, mutation.collection, mutation.value.id),
         mutation.value,
       )
+      if (mutation.collection === 'routines')
+        for (const page of routineValidationPages(mutation.value as Routine))
+          batch.set(
+            doc(
+              getFirebaseServices().db,
+              'users',
+              ownerId,
+              'routines',
+              mutation.value.id,
+              'validationPages',
+              page.id,
+            ),
+            page.value,
+          )
       outstanding.current.add(recordKey(mutation.collection, mutation.value.id))
     }
     return new Promise<void>((resolve, reject) => {
@@ -481,6 +500,28 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
           if (generation.current !== token || activeUid.current !== ownerId) return
           for (const mutation of mutations)
             outstanding.current.delete(recordKey(mutation.collection, mutation.value.id))
+          // The batch acknowledgement confirms these mutations even if a newer
+          // revision arrives before their metadata-only snapshot is delivered.
+          const confirmed = new Set(mutations.map((mutation) => mutation.value.mutationId))
+          const remaining = recoveries.current.filter(
+            (recovery) => !confirmed.has(recovery.mutationId),
+          )
+          try {
+            saveTrainingRecovery(ownerId, remaining)
+            recoveries.current = remaining
+            setRecoveryCount(remaining.length)
+            setHasPendingWrites(
+              remaining.length > 0 ||
+                [...observed.current.values(), ...sourceStates.current.values()].some(
+                  (state) => state.pending,
+                ),
+            )
+          } catch (failure) {
+            setError(message(failure))
+          }
+          clearTimeout(waiter.timeout)
+          waiters.current.delete(waiter)
+          resolve()
         })
         .catch((failure: unknown) => {
           clearTimeout(waiter.timeout)

@@ -82,6 +82,7 @@ function RoutineEditor({
   const [removeEntry, setRemoveEntry] = useState<RoutineExercise | null>(null)
   const inFlight = useRef(false)
   const initializedRef = useRef(false)
+  const draftQueue = useRef<Promise<unknown>>(Promise.resolve())
   const errorSummary = useRef<HTMLDivElement>(null)
   const allowNavigation = useRef(false)
   const liveRoutine = training.routines.find((routine) => routine.id === recordId)
@@ -166,22 +167,24 @@ function RoutineEditor({
 
   useEffect(() => {
     if (!initialized || !uid || notFound || (!dirty && !savedInput)) return
-    const timeout = setTimeout(() => {
-      void saveRoutineDraft({
-        key: `${uid}:${routeKey}`,
-        uid,
-        recordId,
-        expectedRevision,
-        input,
-        savedInput,
-        savedAt: Date.now(),
-      }).catch(() =>
+    draftQueue.current = draftQueue.current
+      .catch(() => undefined)
+      .then(() =>
+        saveRoutineDraft({
+          key: `${uid}:${routeKey}`,
+          uid,
+          recordId,
+          expectedRevision,
+          input,
+          savedInput,
+          savedAt: Date.now(),
+        }),
+      )
+      .catch(() =>
         setDraftMessage(
           'Local draft storage is unavailable. Keep this page open until your routine is saved.',
         ),
       )
-    }, 250)
-    return () => clearTimeout(timeout)
   }, [initialized, uid, routeKey, recordId, expectedRevision, input, savedInput, dirty, notFound])
 
   useEffect(() => {
@@ -195,7 +198,10 @@ function RoutineEditor({
     )
       return
     if (JSON.stringify(inputFromRoutine(liveRoutine)) === savedInput) {
-      void clearRoutineDraft(uid, routeKey).catch(() => undefined)
+      draftQueue.current = draftQueue.current
+        .catch(() => undefined)
+        .then(() => clearRoutineDraft(uid, routeKey))
+        .catch(() => undefined)
       setSavedInput(null)
       setDraftMessage('Saved to your account. Your routine is ready to use in a split.')
     }
@@ -266,6 +272,32 @@ function RoutineEditor({
     allowNavigation.current = true
     navigate('/plan/routines')
   }
+  async function reloadLatest() {
+    if (
+      !uid ||
+      saving ||
+      !window.confirm('Discard this routine draft and load the latest saved version?')
+    )
+      return
+    try {
+      await draftQueue.current.catch(() => undefined)
+      await clearRoutineDraft(uid, routeKey)
+      const latest = liveRoutine ? inputFromRoutine(liveRoutine) : emptyRoutine()
+      setInput(latest)
+      setExpectedRevision(liveRoutine?.revision)
+      setBaseline(JSON.stringify(latest))
+      setSavedInput(null)
+      setError('')
+      setErrors({})
+      setDraftMessage(
+        liveRoutine
+          ? 'The latest saved routine is loaded.'
+          : 'Your unfinished draft was discarded.',
+      )
+    } catch {
+      setError('The draft could not be cleared. Keep this page open and try again.')
+    }
+  }
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (inFlight.current || archived || !uid) return
@@ -283,6 +315,7 @@ function RoutineEditor({
     setError('')
     setErrors({})
     try {
+      await draftQueue.current.catch(() => undefined)
       const serialized = JSON.stringify(result.data)
       // Persist before dispatch. A cloud rejection must not discard the builder.
       await saveRoutineDraft({
@@ -362,8 +395,18 @@ function RoutineEditor({
       {concurrentlyChanged && (
         <div className="notice" role="alert">
           This routine changed in another tab or device. Your edits are preserved, but saving may be
-          rejected. Return to routines and reopen the latest version before editing again.
+          rejected. Load the latest saved version to continue.
         </div>
+      )}
+      {(dirty || concurrentlyChanged || training.error) && (
+        <button
+          type="button"
+          className="text-link"
+          disabled={saving}
+          onClick={() => void reloadLatest()}
+        >
+          Discard draft and load latest
+        </button>
       )}
       {archived && (
         <div className="notice">
