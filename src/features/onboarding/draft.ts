@@ -23,7 +23,12 @@ const database = new OnboardingDatabase()
 export function recoverDraftInput(value: unknown): ProfileInput | null {
   if (!value || typeof value !== 'object') return null
   const input = value as Record<string, unknown>
-  if (typeof input.displayName !== 'string' || !input.preferences || typeof input.preferences !== 'object') return null
+  if (
+    typeof input.displayName !== 'string' ||
+    !input.preferences ||
+    typeof input.preferences !== 'object'
+  )
+    return null
   const preferences = input.preferences as Record<string, unknown>
   const defaults = defaultPreferences()
   for (const [key, defaultValue] of Object.entries(defaults)) {
@@ -38,8 +43,14 @@ export function recoverDraftInput(value: unknown): ProfileInput | null {
     } else if (typeof current !== typeof defaultValue) return null
   }
   const history = preferences.initialHistory as Record<string, unknown> | undefined
-  if (!history || typeof history.lastTrainedDate !== 'string' || typeof history.lastWorkout !== 'string'
-    || !Array.isArray(history.muscles) || history.muscles.some((item: unknown) => typeof item !== 'string')) return null
+  if (
+    !history ||
+    typeof history.lastTrainedDate !== 'string' ||
+    typeof history.lastWorkout !== 'string' ||
+    !Array.isArray(history.muscles) ||
+    history.muscles.some((item: unknown) => typeof item !== 'string')
+  )
+    return null
   const result = structuredClone(value) as ProfileInput
   // JSON serializes an empty numeric input's NaN as null. Restore the empty
   // numeric state so validation can explain it without discarding other edits.
@@ -52,7 +63,11 @@ export function readOnboardingDraft(uid: string): Promise<OnboardingDraft | unde
   return database.drafts.get(uid)
 }
 
-export async function saveOnboardingDraft(uid: string, input: ProfileInput, step: number): Promise<void> {
+export async function saveOnboardingDraft(
+  uid: string,
+  input: ProfileInput,
+  step: number,
+): Promise<void> {
   await database.drafts.put({ uid, input: structuredClone(input), step, savedAt: Date.now() })
 }
 

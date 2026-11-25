@@ -1,12 +1,33 @@
 // Execute with the Firestore emulator: npm run test:rules.
 import { readFileSync } from 'node:fs'
 import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
-import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, getDocs, collection, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import {
+  assertFails,
+  assertSucceeds,
+  initializeTestEnvironment,
+  type RulesTestEnvironment,
+} from '@firebase/rules-unit-testing'
+import {
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  collection,
+  setDoc,
+  updateDoc,
+  writeBatch,
+} from 'firebase/firestore'
 import { defaultPreferences } from '../src/types/profile'
 
 let environment: RulesTestEnvironment
-const profile = (uid: string) => ({ uid, displayName: 'Alex', onboardingCompleted: false, schemaVersion: 1, createdAt: 1, updatedAt: 1 })
+const profile = (uid: string) => ({
+  uid,
+  displayName: 'Alex',
+  onboardingCompleted: false,
+  schemaVersion: 1,
+  createdAt: 1,
+  updatedAt: 1,
+})
 const userDb = (uid: string) => environment.authenticatedContext(uid).firestore()
 
 async function approve(uid: string) {
@@ -14,10 +35,15 @@ async function approve(uid: string) {
     await setDoc(doc(context.firestore(), 'approvedUsers', uid), { active: true })
   })
 }
-async function createAccount(db: ReturnType<typeof userDb>, uid: string, overrides = {}) {
+async function createAccount(
+  db: ReturnType<typeof userDb>,
+  uid: string,
+  overrides = {},
+  preferences = defaultPreferences(),
+) {
   const batch = writeBatch(db)
   batch.set(doc(db, 'users', uid), { ...profile(uid), ...overrides })
-  batch.set(doc(db, 'users', uid, 'preferences', 'main'), defaultPreferences())
+  batch.set(doc(db, 'users', uid, 'preferences', 'main'), preferences)
   return batch.commit()
 }
 
@@ -28,8 +54,12 @@ describe('private account rules', () => {
       firestore: { host: '127.0.0.1', port: 8080, rules: readFileSync('firestore.rules', 'utf8') },
     })
   }, 30_000)
-  beforeEach(async () => { await environment.clearFirestore() })
-  afterAll(async () => { await environment?.cleanup() })
+  beforeEach(async () => {
+    await environment.clearFirestore()
+  })
+  afterAll(async () => {
+    await environment?.cleanup()
+  })
 
   it('allows an approved owner to create and read an atomic profile', async () => {
     await approve('alex')
@@ -37,20 +67,25 @@ describe('private account rules', () => {
     await assertSucceeds(createAccount(db, 'alex'))
     await assertSucceeds(getDoc(doc(db, 'users', 'alex')))
     await assertSucceeds(getDoc(doc(db, 'users', 'alex', 'preferences', 'main')))
-    await assertSucceeds(updateDoc(doc(db, 'users', 'alex'), { displayName: 'Taylor', updatedAt: 2 }))
+    await assertSucceeds(
+      updateDoc(doc(db, 'users', 'alex'), { displayName: 'Taylor', updatedAt: 2 }),
+    )
   })
   it('requires approval even for authenticated owners', async () => {
     const db = userDb('unapproved')
     await assertFails(createAccount(db, 'unapproved'))
     await assertFails(getDoc(doc(db, 'users', 'unapproved')))
+    await assertFails(getDoc(doc(db, 'users', 'unapproved', 'preferences', 'main')))
     await assertSucceeds(getDoc(doc(db, 'approvedUsers', 'unapproved')))
     await assertFails(setDoc(doc(db, 'approvedUsers', 'unapproved'), { active: true }))
   })
   it('denies unauthenticated and cross-user access', async () => {
-    await approve('alex'); await approve('other')
+    await approve('alex')
+    await approve('other')
     await createAccount(userDb('alex'), 'alex')
     const anonymous = environment.unauthenticatedContext().firestore()
     await assertFails(getDoc(doc(anonymous, 'users', 'alex')))
+    await assertFails(createAccount(anonymous, 'alex'))
     await assertFails(getDoc(doc(userDb('other'), 'users', 'alex')))
     await assertFails(getDoc(doc(userDb('other'), 'users', 'alex', 'preferences', 'main')))
     await assertFails(createAccount(userDb('other'), 'alex'))
@@ -79,7 +114,9 @@ describe('private account rules', () => {
     await assertFails(updateDoc(reference, { restDays: [1] }))
     await assertFails(updateDoc(reference, { priorityMuscles: ['Brain'] }))
     await assertFails(updateDoc(reference, { favoriteExercises: [123] }))
-    await assertFails(updateDoc(reference, { favoriteExercises: ['Squat'], excludedExercises: ['Squat'] }))
+    await assertFails(
+      updateDoc(reference, { favoriteExercises: ['Squat'], excludedExercises: ['Squat'] }),
+    )
     await assertFails(updateDoc(reference, { admin: true }))
   })
   it('validates every arbitrary exercise string up to the final allowed position', async () => {
@@ -87,10 +124,41 @@ describe('private account rules', () => {
     const db = userDb('alex')
     await createAccount(db, 'alex')
     const reference = doc(db, 'users', 'alex', 'preferences', 'main')
-    await assertSucceeds(updateDoc(reference, { favoriteExercises: Array.from({ length: 10 }, (_, index) => `Exercise ${index}`) }))
-    await assertSucceeds(updateDoc(reference, { excludedExercises: Array.from({ length: 10 }, (_, index) => `Avoid ${index}`) }))
-    await assertFails(updateDoc(reference, { favoriteExercises: [...Array.from({ length: 9 }, (_, index) => `Exercise ${index}`), 42] }))
-    await assertFails(updateDoc(reference, { favoriteExercises: Array.from({ length: 11 }, (_, index) => `Exercise ${index}`) }))
+    const favorites = Array.from({ length: 10 }, (_, index) => `Exercise ${index}`)
+    const excluded = Array.from({ length: 10 }, (_, index) => `Avoid ${index}`)
+    await assertSucceeds(
+      updateDoc(reference, { favoriteExercises: favorites, excludedExercises: excluded }),
+    )
+    for (const [field, values] of [
+      ['favoriteExercises', favorites],
+      ['excludedExercises', excluded],
+    ] as const) {
+      for (let index = 0; index < values.length; index += 1) {
+        await assertFails(
+          updateDoc(reference, {
+            [field]: values.map((value, position) => (position === index ? 42 : value)),
+          }),
+        )
+      }
+      await assertFails(updateDoc(reference, { [field]: [...values.slice(0, 9), ''] }))
+      await assertFails(updateDoc(reference, { [field]: [...values.slice(0, 9), 'x'.repeat(121)] }))
+      await assertFails(updateDoc(reference, { [field]: [...values.slice(0, 9), values[0]] }))
+    }
+    await assertFails(
+      updateDoc(reference, {
+        favoriteExercises: Array.from({ length: 11 }, (_, index) => `Exercise ${index}`),
+      }),
+    )
+  })
+  it('saves both full exercise lists with the profile in an atomic onboarding write', async () => {
+    await approve('alex')
+    const db = userDb('alex')
+    const preferences = {
+      ...defaultPreferences(),
+      favoriteExercises: Array.from({ length: 10 }, (_, index) => `Favorite ${index}`),
+      excludedExercises: Array.from({ length: 10 }, (_, index) => `Excluded ${index}`),
+    }
+    await assertSucceeds(createAccount(db, 'alex', { onboardingCompleted: true }, preferences))
   })
   it('denies unimplemented collections, enumeration and client deletion', async () => {
     await approve('alex')
@@ -100,7 +168,9 @@ describe('private account rules', () => {
     await assertFails(getDocs(collection(db, 'approvedUsers')))
     await assertFails(setDoc(doc(db, 'config', 'global'), { public: true }))
     await assertFails(setDoc(doc(db, 'users', 'alex', 'workouts', 'new'), { anything: true }))
-    await assertFails(setDoc(doc(db, 'users', 'alex', 'preferences', 'other'), defaultPreferences()))
+    await assertFails(
+      setDoc(doc(db, 'users', 'alex', 'preferences', 'other'), defaultPreferences()),
+    )
     await assertFails(deleteDoc(doc(db, 'users', 'alex')))
     await assertFails(deleteDoc(doc(db, 'users', 'alex', 'preferences', 'main')))
   })

@@ -1,12 +1,24 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app'
-import { browserLocalPersistence, connectAuthEmulator, getAuth, setPersistence, type Auth } from 'firebase/auth'
 import {
-  clearIndexedDbPersistence, connectFirestoreEmulator, initializeFirestore,
-  persistentLocalCache, persistentMultipleTabManager, terminate, type Firestore,
+  browserLocalPersistence,
+  connectAuthEmulator,
+  getAuth,
+  setPersistence,
+  type Auth,
+} from 'firebase/auth'
+import {
+  clearIndexedDbPersistence,
+  connectFirestoreEmulator,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  terminate,
+  type Firestore,
 } from 'firebase/firestore'
 
-export const usingEmulators = import.meta.env.VITE_USE_EMULATORS === 'true'
-  || (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS !== 'false')
+export const usingEmulators =
+  import.meta.env.VITE_USE_EMULATORS === 'true' ||
+  (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATORS !== 'false')
 
 const productionConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -19,18 +31,32 @@ const productionConfig = {
 
 export const firebaseConfigured = usingEmulators || Object.values(productionConfig).every(Boolean)
 
-export interface FirebaseServices { app: FirebaseApp; auth: Auth; db: Firestore }
+export interface FirebaseServices {
+  app: FirebaseApp
+  auth: Auth
+  db: Firestore
+}
 let services: FirebaseServices | null = null
 let authPersistence: Promise<void> | null = null
 
 export function getFirebaseServices(): FirebaseServices {
-  if (!firebaseConfigured) throw new Error('Firebase configuration is missing. Follow the setup instructions before signing in.')
+  if (!firebaseConfigured)
+    throw new Error(
+      'Firebase configuration is missing. Follow the setup instructions before signing in.',
+    )
   if (services) return services
-  const app = initializeApp(usingEmulators ? {
-    apiKey: 'demo-api-key', authDomain: 'demo-muscle-memory.firebaseapp.com',
-    projectId: 'demo-muscle-memory', storageBucket: 'demo-muscle-memory.firebasestorage.app',
-    messagingSenderId: '123456789', appId: '1:123456789:web:musclememory',
-  } : productionConfig)
+  const app = initializeApp(
+    usingEmulators
+      ? {
+          apiKey: 'demo-api-key',
+          authDomain: 'demo-muscle-memory.firebaseapp.com',
+          projectId: 'demo-muscle-memory',
+          storageBucket: 'demo-muscle-memory.firebasestorage.app',
+          messagingSenderId: '123456789',
+          appId: '1:123456789:web:musclememory',
+        }
+      : productionConfig,
+  )
   const auth = getAuth(app)
   const db = initializeFirestore(app, {
     localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),

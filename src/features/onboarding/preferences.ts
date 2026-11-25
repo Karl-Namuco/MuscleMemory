@@ -11,23 +11,39 @@ export const DAYS = [
 ] as const
 
 export const SCHEDULING_LABELS: Record<UserPreferences['schedulingMode'], string> = {
-  fixed: 'Fixed schedule', rolling: 'Rolling split', adaptive: 'Smart adaptive',
+  fixed: 'Fixed schedule',
+  rolling: 'Rolling split',
+  adaptive: 'Smart adaptive',
 }
 
 export const SPLIT_LABELS: Record<UserPreferences['preferredSplit'], string> = {
-  'push-pull-legs': 'Push / Pull / Legs', 'upper-lower': 'Upper / Lower',
-  'full-body': 'Full body', custom: 'Custom split',
+  'push-pull-legs': 'Push / Pull / Legs',
+  'upper-lower': 'Upper / Lower',
+  'full-body': 'Full body',
+  custom: 'Custom split',
 }
 
 export const EXPERIENCE_LABELS: Record<UserPreferences['experience'], string> = {
-  beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced',
+  beginner: 'Beginner',
+  intermediate: 'Intermediate',
+  advanced: 'Advanced',
 }
 
 export function dayNames(values: number[], weekStartsOn: 0 | 1 = 1): string {
   const days = weekStartsOn === 0 ? [DAYS[6], ...DAYS.slice(0, 6)] : DAYS
-  return days.filter((day) => values.includes(day.value)).map((day) => day.short).join(', ')
+  return days
+    .filter((day) => values.includes(day.value))
+    .map((day) => day.short)
+    .join(', ')
 }
 
 export function commaSeparatedValues(value: string): string[] {
-  return [...new Set(value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      value
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ]
 }

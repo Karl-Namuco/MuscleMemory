@@ -9,23 +9,28 @@ service cloud.firestore {
     function stringWithin(value, minimum, maximum) {
       return value is string && value.size() >= minimum && value.size() <= maximum;
     }
-    function uniqueOptions(value, options, minimum, maximum) {
-      return value is list && value.size() >= minimum && value.size() <= maximum
-        && value.hasOnly(options) && value.toSet().size() == value.size();
+    function uniqueOptions(value, options) {
+      // Uniqueness and the finite allowlist already bound the list length.
+      return value is list && value.hasOnly(options) && value.toSet().size() == value.size();
     }
     function muscles(value) {
-      return uniqueOptions(value, ['Chest', 'Shoulders', 'Back', 'Biceps', 'Triceps', 'Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Core'], 0, 10);
-    }
-    function stringAt(values, index) {
-      return values.size() <= index || (values[index] is string && values[index].matches('^[\\s\\S]{1,120}$'));
+      return uniqueOptions(value, ['Chest', 'Shoulders', 'Back', 'Biceps', 'Triceps', 'Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Core']);
     }
     function exerciseNames(values) {
-      return values is list && values.size() <= 10 && values.toSet().size() == values.size()
-        && (values.size() == 0 || (
-          stringAt(values, 0) && stringAt(values, 1) && stringAt(values, 2) && stringAt(values, 3)
-          && stringAt(values, 4) && stringAt(values, 5) && stringAt(values, 6) && stringAt(values, 7)
-          && stringAt(values, 8) && stringAt(values, 9)
-        ));
+      let count = values.size();
+      // Keep each index inline: repeated helper arguments exceed the expression
+      // budget when both exercise lists contain the maximum allowed 10 names.
+      return values is list && count <= 10 && values.toSet().size() == count
+        && (count <= 0 || (values[0] is string && values[0].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 1 || (values[1] is string && values[1].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 2 || (values[2] is string && values[2].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 3 || (values[3] is string && values[3].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 4 || (values[4] is string && values[4].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 5 || (values[5] is string && values[5].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 6 || (values[6] is string && values[6].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 7 || (values[7] is string && values[7].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 8 || (values[8] is string && values[8].matches('^[\\s\\S]{1,120}$')))
+        && (count <= 9 || (values[9] is string && values[9].matches('^[\\s\\S]{1,120}$')));
     }
     function history(value) {
       return value is map && value.keys().hasAll(['lastTrainedDate', 'lastWorkout', 'muscles'])
@@ -45,16 +50,18 @@ service cloud.firestore {
         && value.weightUnit in ['kg', 'lb'] && stringWithin(value.timeZone, 1, 100)
         && value.weekStartsOn in [0, 1]
         && value.experience in ['beginner', 'intermediate', 'advanced']
-        && uniqueOptions(value.goals, ['Build muscle', 'Get stronger', 'General fitness', 'Endurance', 'Body recomposition'], 1, 5)
+        && value.goals.size() > 0
+        && uniqueOptions(value.goals, ['Build muscle', 'Get stronger', 'General fitness', 'Endurance', 'Body recomposition'])
         && value.sessionsPerWeek is int && value.sessionsPerWeek >= 1 && value.sessionsPerWeek <= 7
-        && uniqueOptions(value.preferredDays, [0, 1, 2, 3, 4, 5, 6], 0, 7)
-        && uniqueOptions(value.restDays, [0, 1, 2, 3, 4, 5, 6], 0, 7)
+        && uniqueOptions(value.preferredDays, [0, 1, 2, 3, 4, 5, 6])
+        && uniqueOptions(value.restDays, [0, 1, 2, 3, 4, 5, 6])
         && !value.preferredDays.hasAny(value.restDays)
         && value.sessionMinutes is int && value.sessionMinutes >= 15 && value.sessionMinutes <= 180
         && value.flexibility in ['fixed', 'flexible']
         && value.schedulingMode in ['fixed', 'rolling', 'adaptive']
         && value.preferredSplit in ['push-pull-legs', 'upper-lower', 'full-body', 'custom']
-        && uniqueOptions(value.equipment, ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Smith machine', 'Bodyweight', 'Resistance band', 'Kettlebell'], 1, 8)
+        && value.equipment.size() > 0
+        && uniqueOptions(value.equipment, ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Smith machine', 'Bodyweight', 'Resistance band', 'Kettlebell'])
         && muscles(value.priorityMuscles)
         && exerciseNames(value.excludedExercises) && exerciseNames(value.favoriteExercises)
         && !value.excludedExercises.hasAny(value.favoriteExercises)
@@ -69,6 +76,112 @@ service cloud.firestore {
         && value.schemaVersion == 1
         && value.createdAt is int && value.createdAt > 0
         && value.updatedAt is int && value.updatedAt >= value.createdAt;
+    }
+
+    function trainingMuscles(value) {
+      return uniqueOptions(value, ['Chest', 'Front deltoids', 'Side deltoids', 'Rear deltoids', 'Upper back', 'Lats', 'Lower back', 'Trapezius', 'Biceps', 'Triceps', 'Forearms', 'Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Abdominals', 'Obliques']);
+    }
+    function trainingMetadata(value, uid, id) {
+      return value.keys().hasAll(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId'])
+        && value.id == id && stringWithin(value.id, 1, 128) && value.ownerId == uid
+        && value.createdAt is int && value.createdAt > 0 && value.updatedAt is int && value.updatedAt >= value.createdAt
+        && value.archived is bool && value.schemaVersion == 1
+        && value.revision is int && value.revision >= 1
+        && stringWithin(value.mutationId, 1, 128)
+        && (value.previousMutationId == null || stringWithin(value.previousMutationId, 1, 128));
+    }
+    function trainingCreate(value) { return value.revision == 1 && value.previousMutationId == null; }
+    function trainingUpdate(value) {
+      return value.ownerId == resource.data.ownerId && value.id == resource.data.id
+        && value.createdAt == resource.data.createdAt && value.updatedAt > resource.data.updatedAt
+        && value.revision == resource.data.revision + 1
+        && value.previousMutationId == resource.data.mutationId && value.mutationId != resource.data.mutationId;
+    }
+    function validCustomExercise(value) {
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'source', 'name', 'aliases', 'description', 'instructions', 'primaryMuscles', 'secondaryMuscles', 'equipment', 'movementPattern', 'category', 'difficulty', 'trackingType', 'alternativeIds', 'notes'])
+        && value.source == 'custom' && stringWithin(value.name, 1, 120)
+        && value.aliases is list && value.aliases.size() <= 10 && value.aliases.toSet().size() == value.aliases.size()
+        && stringWithin(value.description, 0, 1000) && value.instructions is list && value.instructions.size() <= 12
+        && trainingMuscles(value.primaryMuscles) && value.primaryMuscles.size() >= 1 && value.primaryMuscles.size() <= 4
+        && trainingMuscles(value.secondaryMuscles) && value.secondaryMuscles.size() <= 8 && !value.primaryMuscles.hasAny(value.secondaryMuscles)
+        && value.equipment in ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Smith machine', 'Bodyweight', 'Resistance band', 'Kettlebell', 'Other']
+        && value.movementPattern in ['Horizontal push', 'Vertical push', 'Horizontal pull', 'Vertical pull', 'Squat', 'Hinge', 'Lunge', 'Carry', 'Rotation', 'Core stability', 'Elbow flexion', 'Elbow extension', 'Shoulder isolation', 'Calf raise', 'Locomotion', 'Other']
+        && value.category in ['compound', 'isolation', 'cardio', 'mobility'] && value.difficulty in ['beginner', 'intermediate', 'advanced']
+        && value.trackingType in ['weight-reps', 'reps', 'assisted-reps', 'duration', 'distance-duration']
+        && value.alternativeIds is list && value.alternativeIds.size() <= 10 && stringWithin(value.notes, 0, 1000);
+    }
+    function routineEntry(value) {
+      // Deep set/snapshot validation happens in the strict runtime schemas on every
+      // read and write. These rules bound every entry and nested set list while
+      // remaining within Firestore's expression budget for 20 x 12-set routines.
+      return value is map
+        && value.keys().hasOnly(['id', 'exerciseId', 'exerciseSnapshot', 'sets', 'restSeconds', 'notes', 'optional', 'supersetGroup'])
+        && value.id is string && value.id.matches('^[\\s\\S]{1,128}$')
+        && value.exerciseId is string && value.exerciseId.matches('^[\\s\\S]{1,128}$')
+        && value.exerciseSnapshot is map && value.exerciseSnapshot.keys().hasOnly(['name', 'trackingType', 'primaryMuscles', 'secondaryMuscles', 'equipment', 'movementPattern'])
+        && value.sets is list && value.sets.size() >= 1 && value.sets.size() <= 12
+        && value.restSeconds is int && value.restSeconds >= 0 && value.restSeconds <= 1800
+        && value.notes is string && value.notes.matches('^[\\s\\S]{0,1000}$') && value.optional is bool
+        && (value.supersetGroup == null || (value.supersetGroup is string && value.supersetGroup.matches('^[\\s\\S]{1,128}$')));
+    }
+    function routineEntries(values) {
+      let n = values.size();
+      return values is list && n >= 1 && n <= 20
+        && (n < 1 || routineEntry(values[0])) && (n < 2 || routineEntry(values[1]))
+        && (n < 3 || routineEntry(values[2])) && (n < 4 || routineEntry(values[3]))
+        && (n < 5 || routineEntry(values[4])) && (n < 6 || routineEntry(values[5]))
+        && (n < 7 || routineEntry(values[6])) && (n < 8 || routineEntry(values[7]))
+        && (n < 9 || routineEntry(values[8])) && (n < 10 || routineEntry(values[9]))
+        && (n < 11 || routineEntry(values[10])) && (n < 12 || routineEntry(values[11]))
+        && (n < 13 || routineEntry(values[12])) && (n < 14 || routineEntry(values[13]))
+        && (n < 15 || routineEntry(values[14])) && (n < 16 || routineEntry(values[15]))
+        && (n < 17 || routineEntry(values[16])) && (n < 18 || routineEntry(values[17]))
+        && (n < 19 || routineEntry(values[18])) && (n < 20 || routineEntry(values[19]));
+    }
+    function validRoutine(value) {
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'name', 'description', 'targetMuscles', 'exercises'])
+        && stringWithin(value.name, 1, 120) && stringWithin(value.description, 0, 1000)
+        && trainingMuscles(value.targetMuscles) && routineEntries(value.exercises);
+    }
+    function validSlot(value, uid) {
+      return value is map && value.keys().hasAll(['id', 'label', 'routineId', 'isRestDay'])
+        && value.keys().hasOnly(['id', 'label', 'routineId', 'isRestDay'])
+        && stringWithin(value.id, 1, 128) && stringWithin(value.label, 1, 80) && value.isRestDay is bool
+        && (value.isRestDay ? value.routineId == null : stringWithin(value.routineId, 1, 128));
+    }
+    function splitSlots(values, uid) {
+      let n = values.size();
+      return values is list && n >= 1 && n <= 12
+        && (n < 1 || validSlot(values[0], uid)) && (n < 2 || validSlot(values[1], uid))
+        && (n < 3 || validSlot(values[2], uid)) && (n < 4 || validSlot(values[3], uid))
+        && (n < 5 || validSlot(values[4], uid)) && (n < 6 || validSlot(values[5], uid))
+        && (n < 7 || validSlot(values[6], uid)) && (n < 8 || validSlot(values[7], uid))
+        && (n < 9 || validSlot(values[8], uid)) && (n < 10 || validSlot(values[9], uid))
+        && (n < 11 || validSlot(values[10], uid)) && (n < 12 || validSlot(values[11], uid));
+    }
+    function validSplit(value, uid) {
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'name', 'description', 'mode', 'slots'])
+        && stringWithin(value.name, 1, 120) && stringWithin(value.description, 0, 1000)
+        && value.mode in ['fixed', 'rolling', 'adaptive'] && splitSlots(value.slots, uid);
+    }
+    function validTrainingSettings(value, uid) {
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'activeSplitId'])
+        && value.archived == false && (value.activeSplitId == null || (stringWithin(value.activeSplitId, 1, 128)
+          && getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(value.activeSplitId)).data.archived == false));
+    }
+    function referencesRoutine(slots, id) {
+      let n = slots.size();
+      return (n > 0 && slots[0].routineId == id) || (n > 1 && slots[1].routineId == id)
+        || (n > 2 && slots[2].routineId == id) || (n > 3 && slots[3].routineId == id)
+        || (n > 4 && slots[4].routineId == id) || (n > 5 && slots[5].routineId == id)
+        || (n > 6 && slots[6].routineId == id) || (n > 7 && slots[7].routineId == id)
+        || (n > 8 && slots[8].routineId == id) || (n > 9 && slots[9].routineId == id)
+        || (n > 10 && slots[10].routineId == id) || (n > 11 && slots[11].routineId == id);
+    }
+    function canArchiveRoutine(uid, id) {
+      let settingsPath = /databases/$(database)/documents/users/$(uid)/trainingSettings/current;
+      return !existsAfter(settingsPath) || getAfter(settingsPath).data.activeSplitId == null
+        || !referencesRoutine(getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(getAfter(settingsPath).data.activeSplitId)).data.slots, id);
     }
 
     match /approvedUsers/{uid} {
@@ -91,6 +204,33 @@ service cloud.firestore {
         allow list, delete: if false;
         allow create, update: if approved(uid) && preferenceId == 'main' && validPreferences(request.resource.data)
           && existsAfter(/databases/$(database)/documents/users/$(uid));
+      }
+      match /customExercises/{id} {
+        allow get, list: if approved(uid);
+        allow create: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingCreate(request.resource.data) && validCustomExercise(request.resource.data);
+        allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validCustomExercise(request.resource.data);
+        allow delete: if false;
+      }
+      match /routines/{id} {
+        allow get, list: if approved(uid);
+        allow create: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingCreate(request.resource.data) && validRoutine(request.resource.data);
+        allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validRoutine(request.resource.data)
+          && (!request.resource.data.archived || canArchiveRoutine(uid, id));
+        allow delete: if false;
+      }
+      match /splits/{id} {
+        allow get, list: if approved(uid);
+        allow create: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingCreate(request.resource.data) && validSplit(request.resource.data, uid);
+        allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validSplit(request.resource.data, uid)
+          && (!request.resource.data.archived || !existsAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current)
+            || getAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current).data.activeSplitId != id);
+        allow delete: if false;
+      }
+      match /trainingSettings/{id} {
+        allow get: if approved(uid) && id == 'current';
+        allow list, delete: if false;
+        allow create: if approved(uid) && id == 'current' && trainingMetadata(request.resource.data, uid, id) && trainingCreate(request.resource.data) && validTrainingSettings(request.resource.data, uid);
+        allow update: if approved(uid) && id == 'current' && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validTrainingSettings(request.resource.data, uid);
       }
     }
     match /{document=**} { allow read, write: if false; }

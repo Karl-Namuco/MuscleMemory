@@ -1,6 +1,32 @@
-export const GOALS = ['Build muscle', 'Get stronger', 'General fitness', 'Endurance', 'Body recomposition'] as const
-export const EQUIPMENT = ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Smith machine', 'Bodyweight', 'Resistance band', 'Kettlebell'] as const
-export const MUSCLES = ['Chest', 'Shoulders', 'Back', 'Biceps', 'Triceps', 'Quadriceps', 'Hamstrings', 'Glutes', 'Calves', 'Core'] as const
+export const GOALS = [
+  'Build muscle',
+  'Get stronger',
+  'General fitness',
+  'Endurance',
+  'Body recomposition',
+] as const
+export const EQUIPMENT = [
+  'Barbell',
+  'Dumbbell',
+  'Cable',
+  'Machine',
+  'Smith machine',
+  'Bodyweight',
+  'Resistance band',
+  'Kettlebell',
+] as const
+export const MUSCLES = [
+  'Chest',
+  'Shoulders',
+  'Back',
+  'Biceps',
+  'Triceps',
+  'Quadriceps',
+  'Hamstrings',
+  'Glutes',
+  'Calves',
+  'Core',
+] as const
 export type Goal = (typeof GOALS)[number]
 export type Equipment = (typeof EQUIPMENT)[number]
 export interface UserPreferences {
@@ -44,11 +70,23 @@ export interface ProfileInput {
 }
 export function defaultPreferences(): UserPreferences {
   return {
-    weightUnit: 'kg', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    weekStartsOn: 1, experience: 'beginner', goals: ['Build muscle'], sessionsPerWeek: 3,
-    preferredDays: [1, 3, 5], restDays: [], sessionMinutes: 60, flexibility: 'flexible',
-    schedulingMode: 'rolling', preferredSplit: 'push-pull-legs', equipment: ['Dumbbell', 'Bodyweight'],
-    priorityMuscles: [], excludedExercises: [], favoriteExercises: [], recoveryPreference: 'balanced',
+    weightUnit: 'kg',
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    weekStartsOn: 1,
+    experience: 'beginner',
+    goals: ['Build muscle'],
+    sessionsPerWeek: 3,
+    preferredDays: [1, 3, 5],
+    restDays: [],
+    sessionMinutes: 60,
+    flexibility: 'flexible',
+    schedulingMode: 'rolling',
+    preferredSplit: 'push-pull-legs',
+    equipment: ['Dumbbell', 'Bodyweight'],
+    priorityMuscles: [],
+    excludedExercises: [],
+    favoriteExercises: [],
+    recoveryPreference: 'balanced',
     initialHistory: { lastTrainedDate: '', lastWorkout: '', muscles: [] },
   }
 }
