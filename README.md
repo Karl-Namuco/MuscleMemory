@@ -2,7 +2,7 @@
 
 An adaptive fitness PWA for desktop, tablet, and mobile, built around one question: “What should I train next?”
 
-The application includes the account foundation and Phase 2 training configuration: an exercise library, custom exercises, routine building with planned sets and supersets, editable split templates, ordered training/rest slots, and an active-plan overview. Configuration has account-scoped drafts, offline saves, cloud confirmation, and recovery controls. Workout logging, scheduling, and analytics remain upcoming work.
+The application includes account access, training configuration, and Phase 3 workout logging: an exercise library, custom exercises, routine building with planned sets and supersets, editable split templates, ordered training/rest slots, an active-plan overview, and performed-set history. Account-scoped drafts and workout checkpoints support interruption recovery, offline saves, cloud confirmation, and explicit conflict recovery. Adaptive scheduling and analytics remain upcoming work.
 
 ## Run locally
 
@@ -35,6 +35,16 @@ Return to the application to complete onboarding. The approval helper is restric
 
 Never expose the emulator ports to an untrusted network. Emulator administrative access is intended for local development, not as an application authorization mechanism.
 
+## Use the application
+
+1. Register, receive administrator approval, and complete onboarding.
+2. In **Plan**, create a routine or add a split template. Adjust exercises and planned sets; make a split active if desired.
+3. Open **Train**, choose **Start workout**, and enter the actual values for each set. Mark a set complete after performing it. Planned targets are shown separately and never become performed work automatically.
+4. Resume an open workout from **Train** after leaving or reloading. Rest timers recover from their saved end time. Use one editing tab; other tabs remain read only until the writer closes and you select **Retry synchronization**.
+5. Select **Finish workout** to save a completed session, or **End early** to preserve it as ended early. Both appear in **Workout history**. A partial finish requires confirmation; only checked sets contribute to totals.
+
+Wait for **Changes synced** before relying on another device or signing out. **Saved on this device** means the workout still needs cloud confirmation. If a save is rejected, download workout recovery before choosing **Use cloud version**. Completing a workout does not yet advance the active split or generate a next-workout recommendation.
+
 ## Checks
 
 ```powershell
@@ -62,7 +72,7 @@ Playwright starts or reuses the Vite development server and runs desktop Chromiu
 
 Development defaults to emulators. [`.env.example`](./.env.example) documents the public Firebase web configuration for a real project. Production access requires an administrator-created `approvedUsers/{uid}` document with `active: true`; registration alone grants no private database access.
 
-The application targets Firebase Authentication, Firestore, and standard Firebase Hosting on Spark. No paid backend or Cloud Functions are required. Hosting configuration is prepared, but deployment is a separate approval step. See [deployment](./docs/deployment.md).
+The application targets Firebase Authentication, Firestore, and standard Firebase Hosting on Spark. No paid backend or Cloud Functions are required. The owner reported deploying Phase 2. Phase 3 has not been published by the agent; rebuild and publish its compatible client and rules together. See [deployment](./docs/deployment.md).
 
 ## Design and roadmap
 
@@ -71,4 +81,4 @@ The application targets Firebase Authentication, Firestore, and standard Firebas
 - [Development roadmap](./docs/roadmap.md)
 - [Testing](./docs/testing.md)
 
-Workout logging, adaptive recommendations, analytics, complete data export, and account deletion remain future phases. Browser storage is recoverable working state, not a guaranteed backup.
+Adaptive recommendations, automatic split advancement, analytics, complete data export, and account deletion remain future phases. History currently loads the latest 200 changed sessions without pagination. Workout recovery downloads preserve local recovery records; they are not a complete account export. Browser storage is recoverable working state, not a guaranteed backup.

@@ -29,21 +29,24 @@ import { watchAccount, writeProfile } from '../repositories/accountRepository'
 import { readableAuthError } from './errors'
 import { assertCanLogout } from './logoutGuards'
 import { clearAllTrainingRecovery, readTrainingRecovery } from '../training/recovery'
+import {
+  clearConfirmedWorkoutCheckpoints,
+  hasUnsyncedWorkoutCheckpoints,
+} from '../workouts/storage'
 
 async function clearFeatureDrafts(preserveTrainingRecovery = false) {
-  const [onboarding, exercises, routines, splits, workouts] = await Promise.all([
+  const [onboarding, exercises, routines, splits] = await Promise.all([
     import('../../features/onboarding/draft'),
     import('../../features/exercises/draft'),
     import('../../features/routines/draft'),
     import('../../features/splits/draft'),
-    import('../workouts/storage'),
   ])
   await Promise.all([
     onboarding.clearAllOnboardingDrafts(),
     exercises.clearAllExerciseDrafts(),
     routines.clearAllRoutineDrafts(),
     splits.clearAllSplitDrafts(),
-    workouts.clearConfirmedWorkoutCheckpoints(),
+    clearConfirmedWorkoutCheckpoints(),
   ])
   if (!preserveTrainingRecovery) clearAllTrainingRecovery()
 }
@@ -310,7 +313,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           'Training drafts are waiting for cloud confirmation. Open your training plan and resolve pending or failed saves before signing out.',
         )
       if (currentUid.current) {
-        const { hasUnsyncedWorkoutCheckpoints } = await import('../workouts/storage')
         if (await hasUnsyncedWorkoutCheckpoints(currentUid.current))
           throw new Error(
             'Your workout has changes awaiting cloud confirmation. Open Train and resolve workout recovery before signing out.',

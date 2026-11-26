@@ -169,7 +169,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     })
   }
   function requireOwner(readOnly = false) {
-    if (!uid || owner.current !== uid || !hydrated.current || ready.current.size < 2)
+    if (!uid || owner.current !== uid || !hydrated.current || (!readOnly && ready.current.size < 2))
       throw new Error('Wait for your workouts to finish loading before making changes.')
     if (!readOnly && !writer.current)
       throw new Error(
@@ -221,8 +221,18 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       return
     inFlight.current.delete(id)
     const dirty = row.version !== attempt.version || row.session.status !== attempt.session.status
-    cloud.current.set(id, attempt.session)
-    sources.current.set(id, { pending: false, cached: false })
+    const newest = cloud.current.get(id)
+    // Snapshots can advance while acknowledgment waits for IndexedDB. Confirm
+    // this attempt without rewinding the cloud copy used for conflict recovery.
+    if (
+      !newest ||
+      newest.revision < attempt.session.revision ||
+      (newest.revision === attempt.session.revision &&
+        newest.mutationId === attempt.session.mutationId)
+    ) {
+      cloud.current.set(id, attempt.session)
+      sources.current.set(id, { pending: false, cached: false })
+    }
     if (attempt.state && (!state.current || state.current.revision <= attempt.state.revision))
       state.current = attempt.state
     if (!dirty && attempt.session.status !== 'active') {

@@ -1,6 +1,6 @@
 # Development roadmap
 
-Phases 1 and 2 have been authorized for implementation. Phase 2 includes exercises, routines, and splits with balanced desktop, tablet, and mobile layouts. Each major phase ends with relevant executed checks and a review before proceeding. Workout logging is the next phase; deployment is a separate approval step.
+Phases 1 through 3 have been authorized for implementation. The current client includes account setup, training configuration, workout logging, interruption recovery, and history across desktop, tablet, and mobile layouts. Phase 4 adaptive scheduling is next. Each major phase ends with relevant executed checks and a review before proceeding. The owner reported deploying Phase 2; the agent has not published Phase 3.
 
 | Phase                      | Scope                                                                                                         | Acceptance gate                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -13,3 +13,7 @@ Phases 1 and 2 have been authorized for implementation. Phase 2 includes exercis
 | 6 — Release refinement     | Export, account deletion, accessibility, performance, update safeguards, deployment preparation               | Release checks pass and limitations are documented                                                       |
 
 Nutrition, social features, wearable integrations, and AI coaching are outside the initial release. No paid AI or Cloud Functions are needed for the approved foundation.
+
+Phase 3 records actual weight/reps, reps, assistance/reps, duration, or distance/duration with optional RPE; it includes timestamp-based rest timers, session snapshots, explicit substitutions, previous completed performance, partial-completion confirmation, and ended-early history. Account-scoped device checkpoints and revision-checked cloud writes preserve interrupted or rejected work. A recovery download is available before explicitly choosing the cloud version.
+
+Completing a workout currently clears the single active-workout pointer and saves history. It does not advance a split cycle, assign a sequence token, or choose the next workout. Availability, scheduling modes, scoring, advancement events, and deterministic next-session recommendations belong to Phase 4. History pagination beyond the latest 200 changed sessions and correction of terminal history remain later refinements; completed and ended-early sessions are currently immutable through the client rules.

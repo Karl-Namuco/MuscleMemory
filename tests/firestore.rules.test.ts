@@ -50,7 +50,7 @@ async function createAccount(
 describe('private account rules', () => {
   beforeAll(async () => {
     environment = await initializeTestEnvironment({
-      projectId: 'demo-muscle-memory',
+      projectId: 'demo-muscle-memory-foundation',
       firestore: { host: '127.0.0.1', port: 8080, rules: readFileSync('firestore.rules', 'utf8') },
     })
   }, 30_000)

@@ -2,6 +2,26 @@
 
 Test files and commands describe repeatable checks. A passing result must be observed from execution; this document does not certify that every check has passed on a particular machine or commit.
 
+## Workout logging verification on 2026-11-26
+
+The resumed Phase 3 implementation passed the following executed checks. Earlier Phase 2 results below describe that earlier implementation.
+
+- All 107 unit/component tests across 10 files and all 34 Firestore emulator rules tests passed. A separate isolated foundation-rules rerun also passed its 9 tests.
+- ESLint, TypeScript checking, and the production build passed after the recovery-export readiness fix. PWA generation cached 55 entries. The existing approximately 548 kB Firestore SDK chunk warning remains.
+- The final full Playwright run passed all 10 executed browser cases, with 2 intentional mobile WebKit adverse-concurrency skips out of 12 total cases. It completed in 3.7 minutes across desktop Chromium and mobile WebKit, covering account setup, training configuration, workout interruption/offline completion, history, and desktop conflict/tab recovery.
+- A Chromium smoke check of a production-mode PWA using local Firebase emulators passed: the service worker cached the application shell; offline active-workout reload preserved actuals and the rest timer; the workout finished offline; an offline history reload retained the finished work; reconnecting created exactly one completed backend session and cleared the active pointer. No page errors were observed. This verifies the production asset-cache path against local emulators, not production Firebase connectivity or physical iPhone behavior.
+
+An earlier WebKit foundation run timed out during a stalled emulator Firestore profile-write request. The unchanged isolated rerun and final full suite passed. Existing timeouts and persistence assertions were retained.
+
+- [Workout domain tests](../tests/workout-domain.test.ts) exercise all five tracking types, actual-set validation, snapshot isolation, substitutions, completed-only totals and previous performance, timestamp-based timers, bounded validation pages, and checkpoint/state schemas.
+- [Workout component tests](../tests/workouts.test.tsx) cover start/resume, duplicate submissions, input types and pound conversion, explicit set completion, substitutions before performance, set bounds/removal, partial-finish confirmation, ended-early history, rest-deadline recovery, live-snapshot preservation, device-save failure/retry, and read-only secondary tabs.
+- [Workout provider tests](../tests/workout-provider.test.tsx) exercise recovery exports from hydrated account records while cloud snapshots are loading, delayed writes across account switches, newer edits arriving around server acknowledgment, preservation of newer cloud snapshots when an older acknowledgment waits behind a device checkpoint, and offline completion before the first cloud acknowledgment without creating a second session identity.
+- [Workout rules tests](../tests/workouts.rules.test.ts) cover approval/ownership isolation, bounded history, atomic start/finish and active-pointer consistency, terminal immutability, competing starts, stale revisions, matching validation pages, lifecycle bounds, maximum 20-exercise/12-set sessions, all tracking types, and denied deletion.
+- [Workout browser flow](../tests/e2e/workouts.spec.ts) checks real device checkpoints and backend actuals, reload/timer recovery, frozen snapshots after routine edits, offline completion and cloud confirmation, previous performance, ended-early history, and desktop/tablet/mobile/narrow-screen overflow.
+- [Workout recovery browser tests](../tests/e2e/workout-recovery.spec.ts) check secondary-tab locking and takeover, plus competing offline browser contexts whose rejected actuals survive reload and recovery download until an explicit cloud-version choice. These adverse concurrency cases run in desktop Chromium; their two mobile WebKit variants are intentionally skipped. The primary workout flow runs on both browser projects.
+
+Cloud acknowledgment is asserted separately from local checkpoint success. Automated browser checks do not certify production Firebase connectivity, physical iPhone behavior, background alerts, or recovery from operating-system storage eviction. The production-mode offline smoke check above covers cached Chromium reloads with local emulators; production hosting and real-device checks remain separate. Completing a workout does not advance a split; scheduling/recommendation checks belong to Phase 4.
+
 ## Training configuration verification on 2026-11-25
 
 - Lint, all 49 unit/component tests, TypeScript checking, and the production build passed. Unit test files run serially to keep DOM-heavy component checks reliable on the development machine.
@@ -25,13 +45,13 @@ The [training browser test](../tests/e2e/training.spec.ts), [split component tes
 
 The production build emits a warning for the approximately 543 kB Firestore SDK chunk. The build succeeds; further performance refinement remains Phase 6 work.
 
-| Command              | Purpose                                               | Prerequisites                                                                        |
-| -------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `npm run lint`       | ESLint checks                                         | Installed dependencies                                                               |
-| `npm run test`       | Unit and component tests                              | Installed dependencies                                                               |
-| `npm run build`      | TypeScript check and production bundle/PWA generation | Installed dependencies                                                               |
-| `npm run test:rules` | Firestore authorization and schema tests              | Java available; port 8080 free                                                       |
-| `npm run test:e2e`   | Browser account/setup/navigation flow                 | Authentication and Firestore emulators running; Playwright Chromium/WebKit installed |
+| Command              | Purpose                                                | Prerequisites                                                                        |
+| -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `npm run lint`       | ESLint checks                                          | Installed dependencies                                                               |
+| `npm run test`       | Unit and component tests                               | Installed dependencies                                                               |
+| `npm run build`      | TypeScript check and production bundle/PWA generation  | Installed dependencies                                                               |
+| `npm run test:rules` | Firestore authorization and schema tests               | Java available; port 8080 free                                                       |
+| `npm run test:e2e`   | Browser account, training, workout, and recovery flows | Authentication and Firestore emulators running; Playwright Chromium/WebKit installed |
 
 `npm run check` combines lint, unit tests, and build. Rules and browser tests remain separate because they have emulator requirements.
 
@@ -49,7 +69,7 @@ Rules tests start their own Firestore emulator and stop it afterward. Stop a dev
 
 WebKit reports cancelled Firestore fetches as errors when leaving a document. The browser test retains these as a JSON attachment only when the exact local Firestore channel signature occurs inside an explicit awaited reload or sign-out navigation. The sign-out window ends after the login URL and heading are confirmed. Every other page error, including the same message during normal use, fails the test. This follows the [Firebase maintainer explanation](https://github.com/firebase/firebase-js-sdk/issues/3708); cloud-confirmed saves and post-reload persistence are still asserted.
 
-The training browser test retains the same exact local-channel diagnostic during its explicit document navigations and intentional offline/reconnect interval. Other page errors still fail. The test confirms that recovery records disappear and the backend receives the edited split after reconnecting.
+The training browser test retains the same exact local-channel diagnostic during its explicit document navigations and intentional offline/reconnect interval. Other page errors still fail. The test confirms that recovery records disappear and the backend receives the edited split after reconnecting. The workout browser flow applies its explicit reload/offline-transition diagnostic window while asserting persisted actuals and final backend status.
 
 ## Manual checks before release
 
@@ -57,4 +77,4 @@ Inspect desktop and iPhone-sized authentication, all onboarding steps, Today, Pl
 
 Use a production build to inspect service-worker updates and cached assets. Use a physical iPhone over HTTPS to check Safari, Add to Home Screen, safe areas, virtual keyboards, reload/background behavior, and storage recovery. Physical-device testing remains outstanding; simulated WebKit is not a substitute.
 
-Future workout and recommendation phases require meaningful tests for interruption/recovery, offline completion, rejected/conflicting writes, duplicate completion, calendar boundaries, and deterministic recommendations. Do not interpret foundation checks as coverage for those unimplemented features.
+Workout interruption/recovery, offline completion, rejected/conflicting writes, and duplicate-submission behavior now have the Phase 3 checks described above. Scheduling calendar boundaries, sequence advancement, and deterministic recommendations remain Phase 4 requirements. Do not interpret workout checks as coverage for those unimplemented features.

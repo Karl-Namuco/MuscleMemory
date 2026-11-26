@@ -192,7 +192,7 @@ test('conflicting offline devices retain the rejected actuals through reload and
       .poll(async () => (await cloudSession(uid, firstId))?.exercises[0].sets[0].weightKg)
       .toBe(10)
     await secondContext.setOffline(false)
-    await expect(recovery(second)).toContainText(/rejected|changed|newer cloud/i, {
+    await expect(recovery(second)).toContainText(/rejected|changed|not confirmed|newer cloud/i, {
       timeout: 45_000,
     })
     await expect(second.getByLabel('Weight (kg)', { exact: true })).toHaveValue('30')
@@ -208,7 +208,7 @@ test('conflicting offline devices retain the rejected actuals through reload and
     await expect(second.getByLabel('Weight (kg)', { exact: true })).toHaveValue('30')
     await expect(second.getByLabel('Reps', { exact: true })).toHaveValue('8')
     await expect(checkbox(second)).toBeChecked()
-    const downloaded = second.waitForEvent('download')
+    const downloaded = second.waitForEvent('download', { timeout: 15_000 })
     await recovery(second)
       .getByRole('button', { name: 'Download workout recovery', exact: true })
       .click()

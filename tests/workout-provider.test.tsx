@@ -1,7 +1,9 @@
 import { act, cleanup, render } from '@testing-library/react'
+import { Blob as NodeBlob } from 'node:buffer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EXERCISES } from '../src/data/exercises'
 import { createRoutineExercise } from '../src/domain/training/helpers'
+import { createWorkoutSession } from '../src/domain/workout/helpers'
 import {
   WorkoutProvider,
   useWorkouts,
@@ -40,6 +42,7 @@ const mock = vi.hoisted(() => ({
   commits: [] as PendingCommit[],
   delayPut: null as null | ((checkpoint: WorkoutCheckpoint) => Promise<void>),
   offline: false,
+  deferSnapshots: false,
 }))
 
 vi.mock('../src/services/auth/AuthProvider', () => ({
@@ -83,7 +86,7 @@ vi.mock('firebase/firestore', () => ({
   onSnapshot: (reference: Reference, _options: unknown, next: (snapshot: Snapshot) => void) => {
     mock.listeners.set(reference, next)
     queueMicrotask(() => {
-      if (mock.listeners.has(reference)) next(snapshotFor(reference))
+      if (!mock.deferSnapshots && mock.listeners.has(reference)) next(snapshotFor(reference))
     })
     return () => {
       mock.listeners.delete(reference)
@@ -217,6 +220,7 @@ beforeEach(() => {
   mock.commits.length = 0
   mock.delayPut = null
   mock.offline = false
+  mock.deferSnapshots = false
   current = null
   Object.defineProperty(navigator, 'locks', {
     configurable: true,
@@ -239,10 +243,68 @@ beforeEach(() => {
 })
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   vi.useRealTimers()
 })
 
 describe('durable workout coordinator', () => {
+  it('exports only the hydrated account recovery while initial cloud snapshots are still loading', async () => {
+    mock.deferSnapshots = true
+    const session = createWorkoutSession(mock.routines[0], mock.uid)
+    session.notes = 'Device recovery awaiting cloud access'
+    const checkpoint: WorkoutCheckpoint = {
+      key: `${mock.uid}:${session.id}`,
+      uid: mock.uid,
+      session,
+      baseRevision: 0,
+      baseMutationId: null,
+      version: 1,
+      dirty: true,
+      attempt: null,
+      stateBase: null,
+      error: 'The prior cloud save was not confirmed.',
+      conflict: false,
+    }
+    mock.persisted.set(checkpoint.key, checkpoint)
+    const otherSession = createWorkoutSession(mock.routines[0], 'owner-b')
+    const otherCheckpoint = {
+      ...structuredClone(checkpoint),
+      key: `owner-b:${otherSession.id}`,
+      uid: 'owner-b',
+      session: otherSession,
+    }
+    mock.persisted.set(otherCheckpoint.key, otherCheckpoint)
+    const createObjectURL = vi.fn<(blob: Blob) => string>().mockReturnValue('blob:recovery')
+    const revokeObjectURL = vi.fn()
+    const OriginalURL = URL
+    vi.stubGlobal(
+      'URL',
+      class extends OriginalURL {
+        static createObjectURL = createObjectURL
+        static revokeObjectURL = revokeObjectURL
+      },
+    )
+    vi.stubGlobal('Blob', NodeBlob)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    render(tree())
+    await settle()
+
+    expect(mock.listeners.size).toBeGreaterThan(0)
+    expect(api().loading).toBe(true)
+    expect(api().sessions.map((item) => item.id)).toEqual([session.id])
+    expect(() => api().downloadRecovery()).not.toThrow()
+    expect(click).toHaveBeenCalledOnce()
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    const exported = JSON.parse(await createObjectURL.mock.calls[0][0].text()) as {
+      ownerId: string
+      checkpoints: WorkoutCheckpoint[]
+    }
+    expect(exported.ownerId).toBe(mock.uid)
+    expect(exported.checkpoints).toEqual([checkpoint])
+    await expect(api().saveWorkout(session)).rejects.toThrow('finish loading')
+    expect(mock.commits).toHaveLength(0)
+  })
+
   it('does not publish a previous account checkpoint when its delayed disk write resolves after an auth switch', async () => {
     const view = render(tree())
     await settle()
@@ -358,5 +420,68 @@ describe('durable workout coordinator', () => {
     expect(api().activeSession).toBeNull()
     expect(api().hasPendingWrites).toBe(false)
     expect(mock.persisted.size).toBe(0)
+  })
+
+  it('keeps a newer cloud version when an older acknowledgment waits behind a device checkpoint', async () => {
+    render(tree())
+    await settle()
+    const id = await start()
+    await advance()
+    await confirm(0)
+    const firstEdit = structuredClone(api().activeSession!)
+    firstEdit.notes = 'Earlier submitted edit'
+    await act(async () => {
+      await api().saveWorkout(firstEdit)
+    })
+    await advance(1500)
+    const submitted = sessionWrite(1)
+    let release!: () => void
+    let writing = false
+    mock.delayPut = async (checkpoint) => {
+      if (writing || checkpoint.session.notes !== 'Latest local draft') return
+      writing = true
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+    }
+    let pending!: Promise<void>
+    await act(async () => {
+      pending = api().saveWorkout({
+        ...structuredClone(api().activeSession!),
+        notes: 'Latest local draft',
+      })
+      await Promise.resolve()
+    })
+    expect(writing).toBe(true)
+    await confirm(1, false)
+    const newer = {
+      ...submitted,
+      revision: submitted.revision + 1,
+      previousMutationId: submitted.mutationId,
+      mutationId: 'another-device-edit',
+      updatedAt: submitted.updatedAt + 1,
+      notes: 'Newest cloud edit',
+    }
+    await act(async () => {
+      mock.remote.set(`users/${mock.uid}/workoutSessions/${id}`, newer)
+      notifyRemote()
+      release()
+      await pending
+    })
+    await settle()
+    await act(async () => {
+      mock.commits[1].resolve()
+    })
+    await settle()
+    expect(api().activeSession?.notes).toBe('Latest local draft')
+    expect(api().rejectedSessions.map((session) => session.id)).toContain(id)
+    await act(async () => {
+      await api().discardLocalChanges(id)
+    })
+    expect(api().activeSession).toMatchObject({
+      revision: newer.revision,
+      mutationId: newer.mutationId,
+      notes: 'Newest cloud edit',
+    })
   })
 })

@@ -11,6 +11,8 @@ import {
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../services/auth/AuthProvider'
+import { useTraining } from '../../services/training/TrainingProvider'
+import { useWorkouts } from '../../services/workouts/WorkoutProvider'
 import {
   dayNames,
   EXPERIENCE_LABELS,
@@ -21,8 +23,17 @@ import '../onboarding/onboarding.css'
 
 export default function ProfilePage() {
   const { user, account, logout } = useAuth()
+  const training = useTraining()
+  const workouts = useWorkouts()
   const [signingOut, setSigningOut] = useState(false)
   const [error, setError] = useState('')
+  const waitingForSync =
+    training.loading ||
+    workouts.loading ||
+    Boolean(account?.hasPendingWrites) ||
+    training.hasPendingWrites ||
+    workouts.hasPendingWrites ||
+    workouts.localSaving
   if (!account || !user)
     return (
       <div className="setup-loading" role="status">
@@ -223,15 +234,16 @@ export default function ProfilePage() {
         <div>
           <h2 id="account-access">Account access</h2>
           <p>
-            Your preferences are private to your account. Pending changes need to sync before
-            signing out.
+            {waitingForSync
+              ? 'Your data is still loading or syncing. Resolve any recovery messages and wait for cloud confirmation before signing out.'
+              : 'Your training data is private to your account. Pending changes need to sync before signing out.'}
           </p>
         </div>
         <button
           type="button"
           className="btn btn-secondary"
           onClick={() => void handleLogout()}
-          disabled={signingOut}
+          disabled={signingOut || waitingForSync}
         >
           <LogOut size={15} aria-hidden="true" />
           {signingOut ? 'Signing out…' : 'Sign out'}

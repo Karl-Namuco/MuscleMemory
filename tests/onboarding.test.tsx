@@ -13,6 +13,8 @@ const mock = vi.hoisted(() => ({
   saveDraft: vi.fn(),
   clearDraft: vi.fn(),
   account: null as AccountData | null,
+  training: { loading: false, hasPendingWrites: false },
+  workouts: { loading: false, hasPendingWrites: false, localSaving: false },
 }))
 
 vi.mock('../src/services/auth/AuthProvider', () => ({
@@ -22,6 +24,12 @@ vi.mock('../src/services/auth/AuthProvider', () => ({
     saveProfile: mock.saveProfile,
     logout: mock.logout,
   }),
+}))
+vi.mock('../src/services/training/TrainingProvider', () => ({
+  useTraining: () => mock.training,
+}))
+vi.mock('../src/services/workouts/WorkoutProvider', () => ({
+  useWorkouts: () => mock.workouts,
 }))
 vi.mock('../src/features/onboarding/draft', async (importOriginal) => {
   const original = await importOriginal<typeof import('../src/features/onboarding/draft')>()
@@ -65,6 +73,8 @@ beforeEach(() => {
   for (const method of [mock.saveProfile, mock.logout, mock.saveDraft, mock.clearDraft])
     method.mockReset().mockResolvedValue(undefined)
   mock.readDraft.mockReset().mockResolvedValue(undefined)
+  mock.training = { loading: false, hasPendingWrites: false }
+  mock.workouts = { loading: false, hasPendingWrites: false, localSaving: false }
   mock.account = {
     profile: {
       uid: 'user-1',
@@ -236,10 +246,43 @@ describe('Profile', () => {
     expect(screen.getByRole('heading', { name: 'Alex' })).toBeVisible()
     expect(screen.getByText('45 minutes')).toBeVisible()
     expect(screen.getByRole('status')).toHaveTextContent('waiting to sync')
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeDisabled()
     expect(screen.getByRole('link', { name: 'Edit preferences' })).toHaveAttribute(
       'href',
       '/onboarding?edit=1',
     )
     expect(screen.queryByRole('button', { name: /export|delete/i })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['training data is loading', () => (mock.training.loading = true)],
+    ['training changes await cloud confirmation', () => (mock.training.hasPendingWrites = true)],
+    ['workout data is loading', () => (mock.workouts.loading = true)],
+    ['workout changes await cloud confirmation', () => (mock.workouts.hasPendingWrites = true)],
+    ['a workout checkpoint is saving on this device', () => (mock.workouts.localSaving = true)],
+  ] as const)('allows sign out only after %s finishes', async (_label, blockSignOut) => {
+    blockSignOut()
+    const user = userEvent.setup()
+    const profile = (
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>
+    )
+    const view = render(profile)
+    const signOut = screen.getByRole('button', { name: 'Sign out' })
+    expect(signOut).toBeDisabled()
+    await user.click(signOut)
+    expect(mock.logout).not.toHaveBeenCalled()
+
+    mock.training = { loading: false, hasPendingWrites: false }
+    mock.workouts = { loading: false, hasPendingWrites: false, localSaving: false }
+    view.rerender(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    )
+    expect(signOut).toBeEnabled()
+    await user.click(signOut)
+    expect(mock.logout).toHaveBeenCalledOnce()
   })
 })
