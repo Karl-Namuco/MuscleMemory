@@ -2,6 +2,9 @@ import Dexie, { type Table } from 'dexie'
 import { z } from 'zod'
 import { workoutSessionSchema } from '../../schemas/workout'
 import type { WorkoutSession } from '../../types/workout'
+import type { RollingProgress } from '../../types/scheduling'
+import type { FixedSchedule } from '../../types/fixedScheduling'
+import { fixedScheduleSchema } from '../../schemas/fixedScheduling'
 
 export interface WorkoutState {
   id: 'current'
@@ -13,12 +16,14 @@ export interface WorkoutState {
   mutationId: string
   previousMutationId: string | null
   activeSessionId: string | null
+  rollingProgress?: RollingProgress
 }
 
 export interface WorkoutAttempt {
   session: WorkoutSession
   state: WorkoutState | null
   version: number
+  fixedSchedule?: FixedSchedule
 }
 
 export interface WorkoutCheckpoint {
@@ -53,6 +58,18 @@ export const workoutStateSchema = z
     mutationId: identifier,
     previousMutationId: identifier.nullable(),
     activeSessionId: identifier.nullable(),
+    rollingProgress: z
+      .record(
+        identifier,
+        z.strictObject({
+          splitRevision: z.number().int().min(1),
+          sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+          lastSlotId: identifier,
+          lastSessionId: identifier,
+          completedAt: timestamp,
+        }),
+      )
+      .optional(),
   })
   .superRefine((state, context) => {
     if (state.updatedAt < state.createdAt)
@@ -88,6 +105,7 @@ export const workoutCheckpointSchema = z
         session: workoutSessionSchema,
         state: workoutStateSchema.nullable(),
         version: z.number().int().min(0),
+        fixedSchedule: fixedScheduleSchema.optional(),
       })
       .nullable(),
     stateBase: workoutStateSchema.nullable(),
@@ -131,6 +149,15 @@ export const workoutCheckpointSchema = z
           code: 'custom',
           path: ['attempt', 'state', 'ownerId'],
           message: 'The interrupted workout state belongs to another account.',
+        })
+      if (
+        checkpoint.attempt.fixedSchedule &&
+        checkpoint.attempt.fixedSchedule.ownerId !== checkpoint.uid
+      )
+        context.addIssue({
+          code: 'custom',
+          path: ['attempt', 'fixedSchedule'],
+          message: 'The attempted calendar belongs to another account.',
         })
     }
   })

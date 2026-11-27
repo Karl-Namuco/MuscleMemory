@@ -92,6 +92,71 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
+.rolling-recommendation {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  border-color: #516238;
+  background: linear-gradient(120deg, #202719, #141811);
+  min-width: 0;
+}
+.rolling-recommendation-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--lime);
+}
+.rolling-recommendation-heading .eyebrow {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rolling-recommendation-copy h2 {
+  margin: 0 0 10px;
+  font-size: 1.6rem;
+  font-weight: 550;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+.rolling-recommendation-copy p {
+  color: #afbaa3;
+  font-size: 0.875rem;
+  line-height: 1.8;
+  margin: 8px 0 0;
+}
+.rolling-recommendation .workout-routine-meta {
+  margin: 0;
+  padding: 0;
+}
+.rolling-recommendation > .subtle-caption {
+  margin: 0;
+}
+.workout-split-choice {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid #495635;
+  border-radius: 8px;
+  background: #1c2216;
+}
+.workout-split-choice p {
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  margin: 0 0 14px;
+}
+.workout-split-choice label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.workout-split-choice input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--lime);
+}
 .workout-routine {
   display: flex;
   flex-direction: column;
@@ -349,6 +414,24 @@
   padding: 10px;
   min-height: 46px;
 }
+.workout-set-fields > .workout-weight-field {
+  flex-basis: 160px;
+  min-width: 130px;
+}
+.workout-weight-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 66px;
+  gap: 6px;
+}
+.workout-weight-controls .input {
+  min-width: 0;
+}
+.workout-weight-conversion {
+  color: #bcc9ac;
+  font-size: 0.6875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
 .workout-set-target {
   grid-column: 2 / -1;
   color: #999;
@@ -605,6 +688,9 @@
     width: 100%;
   }
   .workout-routine > .btn {
+    width: 100%;
+  }
+  .rolling-recommendation > .btn {
     width: 100%;
   }
   .workout-sync {

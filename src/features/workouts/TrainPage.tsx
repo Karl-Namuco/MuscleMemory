@@ -5,6 +5,7 @@ import { estimatedRoutineMinutes } from '../../domain/training/helpers'
 import { useTraining } from '../../services/training/TrainingProvider'
 import { useWorkouts } from '../../services/workouts/WorkoutProvider'
 import type { Routine } from '../../types/training'
+import NextWorkoutRecommendation from './NextWorkoutRecommendation'
 import WorkoutSyncStatus from './WorkoutSyncStatus'
 import './workouts.css'
 
@@ -13,6 +14,7 @@ export default function TrainPage() {
   const workouts = useWorkouts()
   const navigate = useNavigate()
   const [starting, setStarting] = useState<string | null>(null)
+  const [scheduledStarting, setScheduledStarting] = useState(false)
   const [error, setError] = useState('')
   const inFlight = useRef(false)
   const routines = training.routines.filter((routine) => !routine.archived)
@@ -70,12 +72,20 @@ export default function TrainPage() {
           </Link>
         </section>
       )}
+      <NextWorkoutRecommendation
+        disabled={Boolean(starting)}
+        onStartingChange={setScheduledStarting}
+      />
       <div className="section-label-row">
         <h2 className="section-heading">Your routine library</h2>
         <Link className="text-link" to="/plan/routines">
           Manage routines
         </Link>
       </div>
+      <p className="subtle-caption">
+        Library workouts are standalone sessions. Use your recommended workout to advance your
+        split.
+      </p>
       {training.loading || workouts.loading ? (
         <p role="status" className="muted">
           Loading your training…
@@ -109,7 +119,12 @@ export default function TrainPage() {
                 className="btn btn-primary"
                 disabled={
                   Boolean(starting) ||
+                  scheduledStarting ||
                   Boolean(workouts.activeSession) ||
+                  Boolean(training.error) ||
+                  Boolean(workouts.error) ||
+                  training.hasPendingWrites ||
+                  workouts.hasPendingWrites ||
                   workouts.writable === false ||
                   routine.exercises.length === 0
                 }

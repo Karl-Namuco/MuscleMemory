@@ -255,11 +255,20 @@ describe('Profile', () => {
   })
 
   it.each([
-    ['training data is loading', () => (mock.training.loading = true)],
-    ['training changes await cloud confirmation', () => (mock.training.hasPendingWrites = true)],
-    ['workout data is loading', () => (mock.workouts.loading = true)],
-    ['workout changes await cloud confirmation', () => (mock.workouts.hasPendingWrites = true)],
-    ['a workout checkpoint is saving on this device', () => (mock.workouts.localSaving = true)],
+    ['training data is loading', (): boolean => (mock.training.loading = true)],
+    [
+      'training changes await cloud confirmation',
+      (): boolean => (mock.training.hasPendingWrites = true),
+    ],
+    ['workout data is loading', (): boolean => (mock.workouts.loading = true)],
+    [
+      'workout changes await cloud confirmation',
+      (): boolean => (mock.workouts.hasPendingWrites = true),
+    ],
+    [
+      'a workout checkpoint is saving on this device',
+      (): boolean => (mock.workouts.localSaving = true),
+    ],
   ] as const)('allows sign out only after %s finishes', async (_label, blockSignOut) => {
     blockSignOut()
     const user = userEvent.setup()

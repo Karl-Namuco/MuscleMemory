@@ -13,6 +13,7 @@ export const loggedSetSchema = z.strictObject({
   id: identifier,
   type: z.enum(['warmup', 'working', 'drop', 'other']),
   weightKg: z.number().finite().min(0).max(10000).nullable(),
+  inputWeightUnit: z.enum(['kg', 'lb']).optional(),
   reps: z.number().int().min(1).max(1000).nullable(),
   durationSeconds: z.number().int().min(1).max(86400).nullable(),
   distanceMeters: z.number().finite().min(1).max(1000000).nullable(),
@@ -125,11 +126,36 @@ export const workoutSessionSchema = z
         splitId: identifier,
         splitRevision: z.number().int().min(1),
         slotId: identifier,
+        sequence: z
+          .number()
+          .int()
+          .min(0)
+          .max(Number.MAX_SAFE_INTEGER - 1)
+          .optional(),
       })
       .nullable(),
     completionKey: identifier.nullable(),
+    countsForSplit: z.boolean().optional(),
+    fixedContext: z
+      .strictObject({
+        scheduleId: identifier,
+        generationId: identifier,
+        occurrenceId: identifier,
+        occurrenceVersion: z.number().int().min(1),
+      })
+      .optional(),
   })
   .superRefine((session, context) => {
+    if (
+      session.countsForSplit === true &&
+      (session.status !== 'completed' ||
+        (session.splitContext?.sequence === undefined && session.fixedContext === undefined))
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['countsForSplit'],
+        message: 'Only a completed scheduled workout can advance a split.',
+      })
     if (
       session.updatedAt < session.createdAt ||
       session.startedAt < session.createdAt ||

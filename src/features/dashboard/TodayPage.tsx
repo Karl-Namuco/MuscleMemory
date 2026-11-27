@@ -1,15 +1,9 @@
 import { Link } from 'react-router-dom'
-import {
-  CalendarDays,
-  Check,
-  Clock3,
-  Layers3,
-  SlidersHorizontal,
-  Sparkles,
-  Target,
-} from 'lucide-react'
+import { CalendarDays, Clock3, Layers3, SlidersHorizontal, Target } from 'lucide-react'
 import { useAuth } from '../../services/auth/AuthProvider'
+import { useTraining } from '../../services/training/TrainingProvider'
 import { Button } from '../../components/ui/button'
+import NextWorkoutRecommendation from '../workouts/NextWorkoutRecommendation'
 
 export const splitLabels = {
   'push-pull-legs': 'Push / Pull / Legs',
@@ -24,6 +18,7 @@ export const modeLabels = {
 }
 export default function TodayPage() {
   const { account } = useAuth()
+  const { activeSplitId } = useTraining()
   if (!account) return null
   const { preferences: prefs, profile } = account
   const date = new Date()
@@ -62,6 +57,7 @@ export default function TodayPage() {
           <SlidersHorizontal size={16} /> Preferences
         </Link>
       </div>
+      {activeSplitId && <NextWorkoutRecommendation />}
       <section className="welcome-hero" aria-labelledby="hero-title">
         <div className="hero-copy">
           <span className="hero-label">
@@ -191,20 +187,7 @@ export default function TodayPage() {
             ))}
           </div>
         </section>
-        <section className="card next-step-card">
-          <span className="card-icon">
-            <Sparkles size={21} strokeWidth={1.6} />
-          </span>
-          <h2 className="section-heading">The foundation is yours.</h2>
-          <p className="muted">
-            Your profile is set. Routine building comes next, followed by workout logging and
-            adaptive recommendations.
-          </p>
-          <span className="setup-complete">
-            <Check size={15} /> Training preferences saved
-          </span>
-          <span className="phase-caption">Phase 1 · Application foundation</span>
-        </section>
+        {!activeSplitId && <NextWorkoutRecommendation />}
       </div>
     </div>
   )

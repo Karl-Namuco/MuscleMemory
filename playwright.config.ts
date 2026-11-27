@@ -17,6 +17,7 @@ export default defineConfig({
   ],
   webServer: {
     command: 'npm run dev -- --port 5173 --strictPort',
+    env: { VITE_USE_EMULATORS: 'true', VITE_FIREBASE_EMULATOR_HOST: '127.0.0.1' },
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: !process.env.CI,
   },

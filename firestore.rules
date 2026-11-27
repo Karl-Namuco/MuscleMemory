@@ -278,20 +278,34 @@ service cloud.firestore {
         && workoutEntries(value.exercises);
     }
     function workoutSplitContext(value) {
-      return value == null || (value.keys().hasOnly(['splitId', 'splitRevision', 'slotId'])
+      return value == null || (value.keys().hasOnly(['splitId', 'splitRevision', 'slotId', 'sequence'])
         && value.splitId.matches('^[A-Za-z0-9_-]{1,128}$')
         && value.splitRevision is int && value.splitRevision >= 1
-        && value.slotId.matches('^[A-Za-z0-9_-]{1,128}$'));
+        && value.slotId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && (!('sequence' in value) || (value.sequence is int && value.sequence >= 0 && value.sequence <= 9007199254740990)));
+    }
+    function workoutFixedContext(value) {
+      return value == null || (value.keys().hasAll(['scheduleId', 'generationId', 'occurrenceId', 'occurrenceVersion'])
+        && value.keys().hasOnly(['scheduleId', 'generationId', 'occurrenceId', 'occurrenceVersion'])
+        && value.scheduleId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && value.generationId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && value.occurrenceId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && value.occurrenceVersion is int && value.occurrenceVersion >= 1);
     }
     function validWorkout(value) {
-      return value.keys().hasOnly(['id', 'ownerId', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'createdAt', 'updatedAt', 'status', 'startedAt', 'endedAt', 'elapsedSeconds', 'routineId', 'routineRevision', 'routineName', 'notes', 'exercises', 'splitContext', 'completionKey', 'timerEndAt'])
+      return value.keys().hasOnly(['id', 'ownerId', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'createdAt', 'updatedAt', 'status', 'startedAt', 'endedAt', 'elapsedSeconds', 'routineId', 'routineRevision', 'routineName', 'notes', 'exercises', 'splitContext', 'fixedContext', 'completionKey', 'timerEndAt', 'countsForSplit'])
         && value.status in ['active', 'completed', 'abandoned']
+        && value.get('countsForSplit', false) is bool
+        && (value.status == 'completed' || !value.get('countsForSplit', false))
         && value.startedAt is int && value.startedAt >= value.createdAt && value.startedAt <= value.updatedAt
         && value.elapsedSeconds is int && value.elapsedSeconds >= 0 && value.elapsedSeconds <= 31536000
         && value.routineId.matches('^[A-Za-z0-9_-]{1,128}$')
         && value.routineRevision is int && value.routineRevision >= 1
         && value.routineName.matches('^[\\s\\S]{1,120}$') && stringWithin(value.notes, 0, 2000)
         && workoutSplitContext(value.splitContext)
+        && workoutFixedContext(value.get('fixedContext', null))
+        && (value.get('fixedContext', null) == null || (value.splitContext != null
+          && value.fixedContext.scheduleId == value.splitContext.splitId && 'sequence' in value.splitContext))
         && (value.status == 'active'
           ? value.endedAt == null && value.completionKey == null
             && (value.timerEndAt == null || (value.timerEndAt is int && value.timerEndAt >= value.startedAt))
@@ -301,15 +315,92 @@ service cloud.firestore {
     }
     function workoutHasPointer(value, uid) {
       let current = getAfter(/databases/$(database)/documents/users/$(uid)/workoutState/current).data;
-      return current.ownerId == uid && (value.status == 'active' ? current.activeSessionId == value.id : current.activeSessionId == null);
+      return current.ownerId == uid
+        && (value.status == 'active' ? current.activeSessionId == value.id : current.activeSessionId == null)
+        && (!value.get('countsForSplit', false) || countedWorkoutHasProgress(value, current));
+    }
+    function workoutProgress(value) {
+      return value.get('rollingProgress', {});
+    }
+    function countedWorkoutHasProgress(value, current) {
+      let context = value.splitContext;
+      let progress = workoutProgress(current).get(context.splitId, {});
+      return value.get('fixedContext', null) != null ? countedWorkoutHasFixedCompletion(value)
+        : context != null && 'sequence' in context
+        && progress.lastSessionId == value.id && progress.lastSlotId == context.slotId
+        && progress.splitRevision == context.splitRevision && progress.sequence == context.sequence + 1
+        && progress.completedAt == value.endedAt;
+    }
+    function rollingSlotIndex(slots, id) {
+      let n = slots.size();
+      return n > 0 && slots[0].id == id ? 0 : n > 1 && slots[1].id == id ? 1
+        : n > 2 && slots[2].id == id ? 2 : n > 3 && slots[3].id == id ? 3
+        : n > 4 && slots[4].id == id ? 4 : n > 5 && slots[5].id == id ? 5
+        : n > 6 && slots[6].id == id ? 6 : n > 7 && slots[7].id == id ? 7
+        : n > 8 && slots[8].id == id ? 8 : n > 9 && slots[9].id == id ? 9
+        : n > 10 && slots[10].id == id ? 10 : n > 11 && slots[11].id == id ? 11 : -1;
+    }
+    function rollingNextSlot(slots, start) {
+      let n = slots.size();
+      return !slots[start % n].isRestDay ? slots[start % n]
+        : !slots[(start + 1) % n].isRestDay ? slots[(start + 1) % n]
+        : !slots[(start + 2) % n].isRestDay ? slots[(start + 2) % n]
+        : !slots[(start + 3) % n].isRestDay ? slots[(start + 3) % n]
+        : !slots[(start + 4) % n].isRestDay ? slots[(start + 4) % n]
+        : !slots[(start + 5) % n].isRestDay ? slots[(start + 5) % n]
+        : !slots[(start + 6) % n].isRestDay ? slots[(start + 6) % n]
+        : !slots[(start + 7) % n].isRestDay ? slots[(start + 7) % n]
+        : !slots[(start + 8) % n].isRestDay ? slots[(start + 8) % n]
+        : !slots[(start + 9) % n].isRestDay ? slots[(start + 9) % n]
+        : !slots[(start + 10) % n].isRestDay ? slots[(start + 10) % n]
+        : !slots[(start + 11) % n].isRestDay ? slots[(start + 11) % n] : {};
+    }
+    function rollingExpectedSlot(split, previous, session) {
+      let context = session.splitContext;
+      let continuing = previous != null && previous.splitRevision == context.splitRevision;
+      let index = continuing ? rollingSlotIndex(split.slots, previous.lastSlotId) : -1;
+      let expected = rollingNextSlot(split.slots, index + 1);
+      return (!continuing || index >= 0)
+        && context.sequence == (continuing ? previous.sequence : 0)
+        && (!continuing || (session.endedAt >= previous.completedAt && session.id != previous.lastSessionId))
+        && expected.id == context.slotId;
+    }
+    function validRollingAdvance(uid, id, before, after) {
+      let sessionPath = /databases/$(database)/documents/users/$(uid)/workoutSessions/$(id);
+      let session = getAfter(sessionPath).data;
+      let context = session.splitContext;
+      let split = getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(context.splitId)).data;
+      let progress = after.get(context.splitId, {});
+      return get(sessionPath).data.status == 'active'
+        && session.status == 'completed' && session.get('countsForSplit', false)
+        && session.ownerId == uid && context != null && 'sequence' in context
+        && split.ownerId == uid && !split.archived && split.mode == 'rolling'
+        && split.revision == context.splitRevision
+        && getAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current).data.activeSplitId == context.splitId
+        && after.diff(before).affectedKeys().hasOnly([context.splitId])
+        && progress.keys().hasOnly(['splitRevision', 'sequence', 'lastSlotId', 'lastSessionId', 'completedAt'])
+        && progress.splitRevision is int && progress.splitRevision >= 1
+        && progress.sequence is int && progress.sequence >= 1 && progress.sequence <= 9007199254740991
+        && progress.completedAt is int && progress.completedAt > 0
+        && countedWorkoutHasProgress(session, {'rollingProgress': after})
+        && rollingExpectedSlot(split, before.get(context.splitId, null), session)
+        && rollingNextSlot(split.slots, rollingSlotIndex(split.slots, context.slotId)).routineId == session.routineId;
+    }
+    function canChangeWorkoutProgress(value, uid) {
+      let before = workoutProgress(resource.data);
+      let after = workoutProgress(value);
+      return before == after || (resource.data.activeSessionId != null && value.activeSessionId == null
+        && validRollingAdvance(uid, resource.data.activeSessionId, before, after));
     }
     function workoutSnapshotUnchanged(value) {
       return value.startedAt == resource.data.startedAt && value.routineId == resource.data.routineId
         && value.routineRevision == resource.data.routineRevision && value.routineName == resource.data.routineName
-        && value.splitContext == resource.data.splitContext;
+        && value.splitContext == resource.data.splitContext
+        && value.get('fixedContext', null) == resource.data.get('fixedContext', null);
     }
     function validWorkoutState(value, uid) {
-      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'activeSessionId'])
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'activeSessionId', 'rollingProgress'])
+        && workoutProgress(value) is map
         && (value.activeSessionId == null || (value.activeSessionId.matches('^[A-Za-z0-9_-]{1,128}$')
           && getAfter(/databases/$(database)/documents/users/$(uid)/workoutSessions/$(value.activeSessionId)).data.status == 'active'
           && getAfter(/databases/$(database)/documents/users/$(uid)/workoutSessions/$(value.activeSessionId)).data.ownerId == uid));
@@ -318,6 +409,234 @@ service cloud.firestore {
       let previous = resource.data.activeSessionId;
       return previous == null || previous == value.activeSessionId
         || getAfter(/databases/$(database)/documents/users/$(uid)/workoutSessions/$(previous)).data.status in ['completed', 'abandoned'];
+    }
+
+
+    function fixedDate(value) {
+      return value is string && value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
+    }
+    function fixedDateMillis(value) {
+      let parts = value.split('-');
+      return timestamp.date(int(parts[0]), int(parts[1]), int(parts[2])).toMillis();
+    }
+    function fixedOccurrenceIndex(values, id) {
+      let n = values.size();
+      return n > 0 && values[0].id == id ? 0
+        : n > 1 && values[1].id == id ? 1
+        : n > 2 && values[2].id == id ? 2
+        : n > 3 && values[3].id == id ? 3
+        : n > 4 && values[4].id == id ? 4
+        : n > 5 && values[5].id == id ? 5
+        : n > 6 && values[6].id == id ? 6
+        : n > 7 && values[7].id == id ? 7
+        : n > 8 && values[8].id == id ? 8
+        : n > 9 && values[9].id == id ? 9
+        : n > 10 && values[10].id == id ? 10
+        : n > 11 && values[11].id == id ? 11
+        : n > 12 && values[12].id == id ? 12
+        : n > 13 && values[13].id == id ? 13
+        : n > 14 && values[14].id == id ? 14
+        : n > 15 && values[15].id == id ? 15
+        : n > 16 && values[16].id == id ? 16
+        : n > 17 && values[17].id == id ? 17
+        : n > 18 && values[18].id == id ? 18
+        : n > 19 && values[19].id == id ? 19
+        : n > 20 && values[20].id == id ? 20
+        : n > 21 && values[21].id == id ? 21
+        : n > 22 && values[22].id == id ? 22
+        : n > 23 && values[23].id == id ? 23
+        : n > 24 && values[24].id == id ? 24
+        : n > 25 && values[25].id == id ? 25
+        : n > 26 && values[26].id == id ? 26
+        : n > 27 && values[27].id == id ? 27 : -1;
+    }
+    function fixedDateAvailable(values, date, exceptId) {
+      let n = values.size();
+      return (n <= 0 || values[0].id == exceptId || values[0].status == 'skipped' || values[0].scheduledDate != date)
+        && (n <= 1 || values[1].id == exceptId || values[1].status == 'skipped' || values[1].scheduledDate != date)
+        && (n <= 2 || values[2].id == exceptId || values[2].status == 'skipped' || values[2].scheduledDate != date)
+        && (n <= 3 || values[3].id == exceptId || values[3].status == 'skipped' || values[3].scheduledDate != date)
+        && (n <= 4 || values[4].id == exceptId || values[4].status == 'skipped' || values[4].scheduledDate != date)
+        && (n <= 5 || values[5].id == exceptId || values[5].status == 'skipped' || values[5].scheduledDate != date)
+        && (n <= 6 || values[6].id == exceptId || values[6].status == 'skipped' || values[6].scheduledDate != date)
+        && (n <= 7 || values[7].id == exceptId || values[7].status == 'skipped' || values[7].scheduledDate != date)
+        && (n <= 8 || values[8].id == exceptId || values[8].status == 'skipped' || values[8].scheduledDate != date)
+        && (n <= 9 || values[9].id == exceptId || values[9].status == 'skipped' || values[9].scheduledDate != date)
+        && (n <= 10 || values[10].id == exceptId || values[10].status == 'skipped' || values[10].scheduledDate != date)
+        && (n <= 11 || values[11].id == exceptId || values[11].status == 'skipped' || values[11].scheduledDate != date)
+        && (n <= 12 || values[12].id == exceptId || values[12].status == 'skipped' || values[12].scheduledDate != date)
+        && (n <= 13 || values[13].id == exceptId || values[13].status == 'skipped' || values[13].scheduledDate != date)
+        && (n <= 14 || values[14].id == exceptId || values[14].status == 'skipped' || values[14].scheduledDate != date)
+        && (n <= 15 || values[15].id == exceptId || values[15].status == 'skipped' || values[15].scheduledDate != date)
+        && (n <= 16 || values[16].id == exceptId || values[16].status == 'skipped' || values[16].scheduledDate != date)
+        && (n <= 17 || values[17].id == exceptId || values[17].status == 'skipped' || values[17].scheduledDate != date)
+        && (n <= 18 || values[18].id == exceptId || values[18].status == 'skipped' || values[18].scheduledDate != date)
+        && (n <= 19 || values[19].id == exceptId || values[19].status == 'skipped' || values[19].scheduledDate != date)
+        && (n <= 20 || values[20].id == exceptId || values[20].status == 'skipped' || values[20].scheduledDate != date)
+        && (n <= 21 || values[21].id == exceptId || values[21].status == 'skipped' || values[21].scheduledDate != date)
+        && (n <= 22 || values[22].id == exceptId || values[22].status == 'skipped' || values[22].scheduledDate != date)
+        && (n <= 23 || values[23].id == exceptId || values[23].status == 'skipped' || values[23].scheduledDate != date)
+        && (n <= 24 || values[24].id == exceptId || values[24].status == 'skipped' || values[24].scheduledDate != date)
+        && (n <= 25 || values[25].id == exceptId || values[25].status == 'skipped' || values[25].scheduledDate != date)
+        && (n <= 26 || values[26].id == exceptId || values[26].status == 'skipped' || values[26].scheduledDate != date)
+        && (n <= 27 || values[27].id == exceptId || values[27].status == 'skipped' || values[27].scheduledDate != date);
+    }
+    function fixedSchedulePage(value, pageId, expectedSize) {
+      let page = getAfter(/databases/$(database)/documents/users/$(value.ownerId)/fixedSchedules/$(value.id)/validationPages/$(pageId)).data;
+      return page.ownerId == value.ownerId && page.scheduleId == value.id
+        && page.mutationId == value.mutationId && page.revision == value.revision
+        && page.occurrences.size() == expectedSize ? page.occurrences : [];
+    }
+    function validatedFixedOccurrences(value) {
+      let n = value.occurrences.size();
+      let first = fixedSchedulePage(value, 'p0', n > 7 ? 7 : n);
+      let second = n > 7 ? fixedSchedulePage(value, 'p1', n > 14 ? 7 : n - 7) : [];
+      let third = n > 14 ? fixedSchedulePage(value, 'p2', n > 21 ? 7 : n - 14) : [];
+      let fourth = n > 21 ? fixedSchedulePage(value, 'p3', n - 21) : [];
+      return value.occurrences is list && n >= 1 && n <= 28
+        && value.occurrences == first.concat(second).concat(third).concat(fourth);
+    }
+    function validFixedAction(value) {
+      return value.keys().hasAll(['kind', 'occurrenceId', 'otherOccurrenceId', 'sessionId'])
+        && value.keys().hasOnly(['kind', 'occurrenceId', 'otherOccurrenceId', 'sessionId'])
+        && (value.kind == 'create'
+          ? value.occurrenceId == null && value.otherOccurrenceId == null && value.sessionId == null
+          : value.occurrenceId.matches('^[A-Za-z0-9_-]{1,128}$')
+            && (value.kind == 'swap'
+              ? value.otherOccurrenceId.matches('^[A-Za-z0-9_-]{1,128}$') && value.otherOccurrenceId != value.occurrenceId
+              : value.otherOccurrenceId == null)
+            && (value.kind == 'complete' ? value.sessionId.matches('^[A-Za-z0-9_-]{1,128}$') : value.sessionId == null))
+        && value.kind in ['create', 'move', 'swap', 'skip', 'complete'];
+    }
+    function validFixedSchedule(value) {
+      return value.keys().hasOnly(['id', 'ownerId', 'createdAt', 'updatedAt', 'archived', 'schemaVersion', 'revision', 'mutationId', 'previousMutationId', 'splitId', 'splitRevision', 'generationId', 'timeZone', 'startDate', 'endDate', 'preferredDays', 'occurrences', 'action'])
+        && value.id == value.splitId && value.archived == false
+        && value.splitRevision is int && value.splitRevision >= 1
+        && value.generationId.matches('^[A-Za-z0-9_-]{1,128}$')
+        && stringWithin(value.timeZone, 1, 100)
+        && fixedDate(value.startDate) && fixedDate(value.endDate)
+        && fixedDateMillis(value.endDate) - fixedDateMillis(value.startDate) == 2332800000
+        && uniqueOptions(value.preferredDays, [0, 1, 2, 3, 4, 5, 6])
+        && validFixedAction(value.action) && validatedFixedOccurrences(value);
+    }
+    function validFixedGeneration(value, uid) {
+      let split = getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(value.splitId)).data;
+      return value.action.kind == 'create' && value.mutationId == value.generationId
+        && split.ownerId == uid && !split.archived && split.mode == 'fixed' && split.revision == value.splitRevision
+        && getAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current).data.activeSplitId == value.splitId;
+    }
+    function fixedOccurrenceEntry(value, index, parent, split, creating) {
+      return value.keys().hasAll(['id', 'slotId', 'routineId', 'label', 'isRestDay', 'scheduledDate', 'originalDate', 'version', 'sequence', 'status', 'completionSessionId', 'resolvedAt'])
+        && value.keys().hasOnly(['id', 'slotId', 'routineId', 'label', 'isRestDay', 'scheduledDate', 'originalDate', 'version', 'sequence', 'status', 'completionSessionId', 'resolvedAt'])
+        && value.id == parent.generationId + '_' + string(index) && value.sequence == index
+        && value.slotId.matches('^[A-Za-z0-9_-]{1,128}$') && value.label.matches('^[\\s\\S]{1,80}$')
+        && value.isRestDay is bool && (value.isRestDay ? value.routineId == null : value.routineId.matches('^[A-Za-z0-9_-]{1,128}$'))
+        && value.version is int && value.version >= 1 && value.version <= 9007199254740991
+        && fixedDate(value.scheduledDate) && fixedDate(value.originalDate)
+        && value.scheduledDate >= parent.startDate && value.scheduledDate <= parent.endDate
+        && value.originalDate >= parent.startDate && value.originalDate <= parent.endDate
+        && (index == 0 || parent.occurrences[index - 1].originalDate < value.originalDate)
+        && (value.status == 'planned'
+          ? value.completionSessionId == null && value.resolvedAt == null
+          : value.resolvedAt is int && value.resolvedAt > 0 && (value.status == 'skipped'
+            ? value.completionSessionId == null
+            : value.status == 'completed' && !value.isRestDay && value.completionSessionId.matches('^[A-Za-z0-9_-]{1,128}$')))
+        && (!creating || (value.version == 1 && value.status == 'planned' && value.scheduledDate == value.originalDate
+          && value.slotId == split.slots[index % split.slots.size()].id
+          && value.routineId == split.slots[index % split.slots.size()].routineId
+          && value.isRestDay == split.slots[index % split.slots.size()].isRestDay
+          && value.label == split.slots[index % split.slots.size()].label));
+    }
+    function fixedOccurrencePageEntries(values, start, parent, split, creating) {
+      let n = values.size();
+      return values is list && n >= 1 && n <= 7
+        && (n <= 0 || fixedOccurrenceEntry(values[0], start + 0, parent, split, creating))
+        && (n <= 1 || fixedOccurrenceEntry(values[1], start + 1, parent, split, creating))
+        && (n <= 2 || fixedOccurrenceEntry(values[2], start + 2, parent, split, creating))
+        && (n <= 3 || fixedOccurrenceEntry(values[3], start + 3, parent, split, creating))
+        && (n <= 4 || fixedOccurrenceEntry(values[4], start + 4, parent, split, creating))
+        && (n <= 5 || fixedOccurrenceEntry(values[5], start + 5, parent, split, creating))
+        && (n <= 6 || fixedOccurrenceEntry(values[6], start + 6, parent, split, creating));
+    }
+    function validFixedPage(value, uid, scheduleId, pageId) {
+      let parentPath = /databases/$(database)/documents/users/$(uid)/fixedSchedules/$(scheduleId);
+      let parent = getAfter(parentPath).data;
+      let creating = parent.action.kind == 'create';
+      let split = creating ? getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(parent.splitId)).data : {};
+      let start = pageId == 'p0' ? 0 : pageId == 'p1' ? 7 : pageId == 'p2' ? 14 : 21;
+      return pageId in ['p0', 'p1', 'p2', 'p3']
+        && value.keys().hasAll(['ownerId', 'scheduleId', 'mutationId', 'revision', 'occurrences'])
+        && value.keys().hasOnly(['ownerId', 'scheduleId', 'mutationId', 'revision', 'occurrences'])
+        && value.ownerId == uid && value.scheduleId == scheduleId && parent.ownerId == uid
+        && value.mutationId == parent.mutationId && value.revision == parent.revision
+        && (!exists(parentPath) || get(parentPath).data.mutationId != parent.mutationId)
+        && value.occurrences == parent.occurrences[start:start + value.occurrences.size()]
+        && fixedOccurrencePageEntries(value.occurrences, start, parent, split, creating);
+    }
+    function fixedOccurrenceMutable(before, after, fields) {
+      return before.status == 'planned' && after.version == before.version + 1
+        && after.diff(before).affectedKeys().hasOnly(fields);
+    }
+    function fixedOccurrenceAction(value, before, after, uid) {
+      return value.action.kind == 'move'
+        ? fixedOccurrenceMutable(before, after, ['scheduledDate', 'version']) && after.scheduledDate != before.scheduledDate
+          && fixedDateAvailable(value.occurrences, after.scheduledDate, after.id)
+        : value.action.kind == 'skip'
+          ? fixedOccurrenceMutable(before, after, ['status', 'resolvedAt', 'version'])
+            && after.status == 'skipped' && after.resolvedAt is int && after.resolvedAt > 0
+          : value.action.kind == 'complete'
+            && fixedOccurrenceMutable(before, after, ['status', 'completionSessionId', 'resolvedAt', 'version'])
+            && after.status == 'completed' && !after.isRestDay && after.completionSessionId == value.action.sessionId
+            && validFixedCompletion(value, before, after, uid);
+    }
+    function fixedSwap(value, before, after, index, uid) {
+      let otherIndex = fixedOccurrenceIndex(before, value.action.otherOccurrenceId);
+      let firstBefore = before[index];
+      let firstAfter = after[index];
+      let secondBefore = before[otherIndex];
+      let secondAfter = after[otherIndex];
+      return otherIndex >= 0 && otherIndex != index
+        && fixedOccurrenceMutable(firstBefore, firstAfter, ['scheduledDate', 'version'])
+        && fixedOccurrenceMutable(secondBefore, secondAfter, ['scheduledDate', 'version'])
+        && firstAfter.scheduledDate == secondBefore.scheduledDate && secondAfter.scheduledDate == firstBefore.scheduledDate
+        && after.removeAll([firstAfter, secondAfter]) == before.removeAll([firstBefore, secondBefore]);
+    }
+    function fixedScheduleMutation(value, uid) {
+      let before = resource.data.occurrences;
+      let after = value.occurrences;
+      let index = fixedOccurrenceIndex(before, value.action.occurrenceId);
+      return value.diff(resource.data).affectedKeys().hasOnly(['updatedAt', 'revision', 'mutationId', 'previousMutationId', 'occurrences', 'action'])
+        && before.size() == after.size() && index >= 0
+        && (value.action.kind == 'swap' ? fixedSwap(value, before, after, index, uid)
+          : after.removeAll([after[index]]) == before.removeAll([before[index]])
+            && fixedOccurrenceAction(value, before[index], after[index], uid));
+    }
+    function validFixedCompletion(schedule, before, after, uid) {
+      let sessionPath = /databases/$(database)/documents/users/$(uid)/workoutSessions/$(schedule.action.sessionId);
+      let session = getAfter(sessionPath).data;
+      let context = session.fixedContext;
+      let split = getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(schedule.splitId)).data;
+      return get(sessionPath).data.status == 'active' && session.status == 'completed' && session.get('countsForSplit', false)
+        && session.ownerId == uid && session.completionKey == session.id
+        && context.scheduleId == schedule.id && context.generationId == schedule.generationId
+        && context.occurrenceId == before.id && context.occurrenceVersion == before.version
+        && session.splitContext.splitId == schedule.splitId && session.splitContext.splitRevision == schedule.splitRevision
+        && session.splitContext.slotId == before.slotId && session.splitContext.sequence == before.sequence
+        && session.routineId == before.routineId && after.resolvedAt == session.endedAt
+        && split.ownerId == uid && split.mode == 'fixed' && !split.archived && split.revision == schedule.splitRevision
+        && getAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current).data.activeSplitId == schedule.splitId;
+    }
+    function countedWorkoutHasFixedCompletion(session) {
+      let context = session.fixedContext;
+      let schedule = getAfter(/databases/$(database)/documents/users/$(session.ownerId)/fixedSchedules/$(context.scheduleId)).data;
+      let index = session.splitContext.sequence;
+      let occurrence = schedule.occurrences[index];
+      return schedule.ownerId == session.ownerId && schedule.generationId == context.generationId
+        && schedule.action.kind == 'complete' && schedule.action.sessionId == session.id
+        && schedule.action.occurrenceId == context.occurrenceId
+        && occurrence.id == context.occurrenceId && occurrence.version == context.occurrenceVersion + 1
+        && occurrence.status == 'completed' && occurrence.completionSessionId == session.id
+        && occurrence.resolvedAt == session.endedAt;
     }
 
     match /approvedUsers/{uid} {
@@ -374,6 +693,27 @@ service cloud.firestore {
         allow create: if approved(uid) && id == 'current' && trainingMetadata(request.resource.data, uid, id) && trainingCreate(request.resource.data) && validTrainingSettings(request.resource.data, uid);
         allow update: if approved(uid) && id == 'current' && trainingMetadata(request.resource.data, uid, id) && trainingUpdate(request.resource.data) && validTrainingSettings(request.resource.data, uid);
       }
+
+      match /fixedSchedules/{id} {
+        allow get: if approved(uid);
+        allow list: if approved(uid) && request.query.limit <= 200;
+        allow create: if approved(uid) && trainingMetadata(request.resource.data, uid, id)
+          && trainingCreate(request.resource.data) && validFixedSchedule(request.resource.data)
+          && validFixedGeneration(request.resource.data, uid);
+        allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id)
+          && trainingUpdate(request.resource.data) && validFixedSchedule(request.resource.data)
+          && (request.resource.data.action.kind == 'create'
+            ? request.resource.data.generationId != resource.data.generationId && validFixedGeneration(request.resource.data, uid)
+            : fixedScheduleMutation(request.resource.data, uid));
+        allow delete: if false;
+        match /validationPages/{pageId} {
+          allow read, delete: if false;
+          allow create: if approved(uid) && validFixedPage(request.resource.data, uid, id, pageId);
+          allow update: if approved(uid) && request.resource.data.mutationId != resource.data.mutationId
+            && validFixedPage(request.resource.data, uid, id, pageId);
+        }
+      }
+
       match /workoutSessions/{id} {
         allow get: if approved(uid);
         allow list: if approved(uid) && request.query.limit <= 200;
@@ -396,10 +736,12 @@ service cloud.firestore {
         allow get: if approved(uid) && id == 'current';
         allow list, delete: if false;
         allow create: if approved(uid) && id == 'current' && workoutMetadata(request.resource.data, uid, id)
-          && trainingCreate(request.resource.data) && validWorkoutState(request.resource.data, uid);
+          && trainingCreate(request.resource.data) && validWorkoutState(request.resource.data, uid)
+          && workoutProgress(request.resource.data).size() == 0;
         allow update: if approved(uid) && id == 'current' && workoutMetadata(request.resource.data, uid, id)
           && trainingUpdate(request.resource.data) && validWorkoutState(request.resource.data, uid)
-          && canChangeWorkoutPointer(request.resource.data, uid);
+          && canChangeWorkoutPointer(request.resource.data, uid)
+          && canChangeWorkoutProgress(request.resource.data, uid);
       }
     }
     match /{document=**} { allow read, write: if false; }

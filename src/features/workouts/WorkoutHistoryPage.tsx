@@ -62,6 +62,15 @@ export default function WorkoutHistoryPage() {
           </span>
         </div>
         <WorkoutSyncStatus />
+        {session.splitContext?.sequence !== undefined && (
+          <p className="subtle-caption">
+            {session.countsForSplit
+              ? workouts.hasPendingWrites
+                ? 'Included in split progress on this device; waiting for cloud confirmation.'
+                : 'Counted toward your split.'
+              : 'This workout was saved without advancing your split.'}
+          </p>
+        )}
         <section className="card workout-progress" aria-label="Workout totals">
           <div className="workout-stat">
             <strong>{totals.completedSets}</strong>

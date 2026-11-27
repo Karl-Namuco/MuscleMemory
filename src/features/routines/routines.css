@@ -428,6 +428,28 @@
   min-height: 80px;
   max-height: 410px;
 }
+.routine-create-exercise {
+  align-self: flex-start;
+}
+.routine-custom-exercise {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.routine-custom-exercise h3 {
+  margin: 0 0 8px;
+  font-size: 1.125rem;
+}
+.routine-custom-exercise p {
+  line-height: 1.7;
+  margin-bottom: 0;
+}
+.routine-custom-exercise .notice {
+  margin: 0;
+}
+.routine-custom-exercise .routine-dialog-actions {
+  margin-top: 0;
+}
 .routine-picker-item {
   display: flex;
   width: 100%;

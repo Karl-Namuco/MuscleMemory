@@ -16,6 +16,15 @@ import { SPLIT_TEMPLATES } from '../../data/splitTemplates'
 import { createRoutineExercise } from '../../domain/training/helpers'
 import { routineValidationPages } from '../../domain/training/validationPages'
 import {
+  createFixedSchedule,
+  moveFixedOccurrence,
+  swapFixedOccurrences,
+  skipFixedOccurrence,
+} from '../../domain/scheduling/fixed'
+import { fixedScheduleValidationPages } from '../../domain/scheduling/fixedValidationPages'
+import { fixedScheduleSchema } from '../../schemas/fixedScheduling'
+import type { FixedSchedule } from '../../types/fixedScheduling'
+import {
   customExerciseInputSchema,
   customExerciseSchema,
   routineInputSchema,
@@ -40,7 +49,7 @@ import { registerLogoutGuard } from '../auth/logoutGuards'
 import { getFirebaseServices } from '../firebase/client'
 import { readTrainingRecovery, saveTrainingRecovery, type TrainingRecovery } from './recovery'
 
-type Stored = Exercise | Routine | TrainingSplit
+type Stored = Exercise | Routine | TrainingSplit | FixedSchedule
 type CollectionName = TrainingRecovery['collection']
 type Settings = RecordMetadata & { activeSplitId: string | null }
 type Mutation = { collection: CollectionName; value: Stored | Settings }
@@ -67,6 +76,7 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
   const [customExercises, setCustomExercises] = useState<Exercise[]>([])
   const [routines, setRoutines] = useState<Routine[]>([])
   const [splits, setSplits] = useState<TrainingSplit[]>([])
+  const [fixedSchedules, setFixedSchedules] = useState<FixedSchedule[]>([])
   const [activeSplitId, setActiveSplitId] = useState<string | null>(null)
   const [loading, setLoading] = useState(Boolean(uid))
   const [error, setError] = useState<string | null>(null)
@@ -101,6 +111,7 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
     setCustomExercises([])
     setRoutines([])
     setSplits([])
+    setFixedSchedules([])
     setActiveSplitId(null)
     setError(null)
     setFromCache(true)
@@ -199,7 +210,9 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
             ? routineSchema
             : collectionName === 'splits'
               ? trainingSplitSchema
-              : trainingSettingsSchema
+              : collectionName === 'fixedSchedules'
+                ? fixedScheduleSchema
+                : trainingSettingsSchema
       const value = schema.parse(snapshot.data())
       if (value.id !== snapshot.id || value.ownerId !== uid)
         throw new Error(
@@ -230,7 +243,12 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
           .map(([, value]) => value as TrainingSplit),
       )
       setActiveSplitId(settings.current?.activeSplitId ?? null)
-      loadingRef.current = ready.size < 4
+      setFixedSchedules(
+        [...records.current.entries()]
+          .filter(([key]) => key.startsWith('fixedSchedules/'))
+          .map(([, value]) => value as FixedSchedule),
+      )
+      loadingRef.current = ready.size < 5
       setLoading(loadingRef.current)
       reconcileRecovery()
     }
@@ -239,6 +257,8 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
       const splitId = settings.current?.activeSplitId
       const needed = new Set<string>()
       if (splitId && !lists.get('splits')?.has(splitId)) needed.add(recordKey('splits', splitId))
+      if (splitId && !lists.get('fixedSchedules')?.has(splitId))
+        needed.add(recordKey('fixedSchedules', splitId))
       const split = splitId
         ? (records.current.get(recordKey('splits', splitId)) as TrainingSplit | undefined)
         : undefined
@@ -267,9 +287,10 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
                   if (value) records.current.set(key, value as Stored)
                   else if (!snapshot.metadata.fromCache) {
                     records.current.delete(key)
-                    setError(
-                      'An active split references a missing training record. Choose another split or repair its routines.',
-                    )
+                    if (collectionName !== 'fixedSchedules')
+                      setError(
+                        'An active split references a missing training record. Choose another split or repair its routines.',
+                      )
                   }
                   publish()
                   ensureReferences()
@@ -297,7 +318,12 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
       // sync indicator (or sign-out guard) stuck after backend acknowledgement.
       reconcileRecovery()
     }
-    for (const collectionName of ['customExercises', 'routines', 'splits'] as const) {
+    for (const collectionName of [
+      'customExercises',
+      'routines',
+      'splits',
+      'fixedSchedules',
+    ] as const) {
       stops.push(
         onSnapshot(
           query(
@@ -477,6 +503,20 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
             ),
             page.value,
           )
+      if (mutation.collection === 'fixedSchedules')
+        for (const page of fixedScheduleValidationPages(mutation.value as FixedSchedule))
+          batch.set(
+            doc(
+              getFirebaseServices().db,
+              'users',
+              ownerId,
+              'fixedSchedules',
+              mutation.value.id,
+              'validationPages',
+              page.id,
+            ),
+            page.value,
+          )
       outstanding.current.add(recordKey(mutation.collection, mutation.value.id))
     }
     return new Promise<void>((resolve, reject) => {
@@ -593,6 +633,70 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
       value = trainingSplitSchema.parse({ ...parsed, ...metadata(id, previous) })
     await commit([{ collection: 'splits', value }])
     return id
+  }
+  async function buildFixedSchedule(input: {
+    splitId: string
+    startDate: string
+    timeZone: string
+    preferredDays: number[]
+    expectedRevision?: number
+  }) {
+    const ownerId = requireUser()
+    const split = records.current.get(recordKey('splits', input.splitId)) as
+      TrainingSplit | undefined
+    if (!split || settings.current?.activeSplitId !== split.id)
+      throw new Error('Choose an active Fixed split before creating its calendar.')
+    const previous = previousRecord('fixedSchedules', {
+      id: split.id,
+      expectedRevision: input.expectedRevision,
+    }) as FixedSchedule | undefined
+    const value = createFixedSchedule({
+      split,
+      routines: [...records.current.entries()]
+        .filter(([key]) => key.startsWith('routines/'))
+        .map(([, item]) => item as Routine),
+      startDate: input.startDate,
+      timeZone: input.timeZone,
+      preferredDays: input.preferredDays,
+      generationId: crypto.randomUUID(),
+      now: Math.max(Date.now(), (previous?.updatedAt ?? 0) + 1),
+      previous,
+    })
+    if (value.ownerId !== ownerId) throw new Error('This calendar belongs to another account.')
+    await commit([{ collection: 'fixedSchedules', value }])
+  }
+  async function editFixedSchedule(
+    id: string,
+    expectedRevision: number,
+    action:
+      | { kind: 'move'; occurrenceId: string; date: string }
+      | { kind: 'swap'; occurrenceId: string; otherOccurrenceId: string }
+      | { kind: 'skip'; occurrenceId: string },
+  ) {
+    const previous = previousRecord('fixedSchedules', { id, expectedRevision }) as
+      FixedSchedule | undefined
+    if (!previous) throw new Error('Create a calendar first.')
+    const split = records.current.get(recordKey('splits', id)) as TrainingSplit | undefined
+    if (
+      !split ||
+      split.archived ||
+      split.mode !== 'fixed' ||
+      split.revision !== previous.splitRevision ||
+      settings.current?.activeSplitId !== id
+    )
+      throw new Error('This split changed. Start a new calendar for the current split.')
+    const changed =
+      action.kind === 'move'
+        ? moveFixedOccurrence(previous, action.occurrenceId, action.date)
+        : action.kind === 'swap'
+          ? swapFixedOccurrences(previous, action.occurrenceId, action.otherOccurrenceId)
+          : skipFixedOccurrence(previous, action.occurrenceId, Date.now())
+    if (changed === previous) return
+    const value = fixedScheduleSchema.parse({
+      ...changed,
+      ...metadata(id, previous),
+    }) as FixedSchedule
+    await commit([{ collection: 'fixedSchedules', value }])
   }
   async function archiveRecord(
     collectionName: 'customExercises' | 'routines' | 'splits',
@@ -731,6 +835,9 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
     routines,
     splits,
     activeSplitId,
+    fixedSchedules,
+    buildFixedSchedule,
+    editFixedSchedule,
     loading,
     error,
     hasPendingWrites,

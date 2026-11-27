@@ -2,6 +2,24 @@
 
 Test files and commands describe repeatable checks. A passing result must be observed from execution; this document does not certify that every check has passed on a particular machine or commit.
 
+## Initial Rolling scheduling verification on 2026-11-27
+
+The first Phase 4 increment adds Rolling recommendations and qualifying split advancement. Fixed and Adaptive scheduling remain planned.
+
+Executed checks: all 161 unit/component tests across 11 files and all 43 Firestore emulator rules tests passed. TypeScript checking and the production build passed with PWA generation caching 55 entries.
+
+The full Playwright suite passed all 12 runnable cases, with the 2 existing WebKit adverse-concurrency cases intentionally skipped (14 total). It covered seven desktop Chromium cases and five iPhone-sized WebKit cases. Narrow recommendation/rest screenshots were inspected; the active split recommendation was then moved directly below the Today greeting and the focused Rolling flow was rechecked on both browsers.
+
+- [Scheduling domain tests](../tests/rolling-scheduling.test.ts) cover deterministic selection, missed days and long breaks, repeated routine slots, wrapping, split revisions, unavailable routines, local-calendar rest dates across timezones and DST, planned-set coverage, and stale/duplicate/out-of-order sequence tokens.
+- [Workout provider tests](../tests/workout-provider.test.tsx) cover atomic cursor/history writes, repeated routine slots, partial inclusion choices, standalone and ended-early sessions, offline completion before the initial active write, and retaining completion intent while training data is loading, pending, or rejected. A reload regression test verifies that a terminal checkpoint waits for its split to hydrate before resolving advancement.
+- [Workout UI tests](../tests/workouts.test.tsx) cover recommendation starts, explicit early-rest confirmation, synchronization/read-only guards, partial inclusion defaulting to unchecked, changed splits, and preserving consent while the plan is unresolved.
+- [Workout rules tests](../tests/workouts.rules.test.ts) verify that only the expected frozen slot/sequence advances, terminal history and progress change atomically, unrelated cursors remain intact, legacy sessions remain valid, and forged/stale changes fail. The maximum 20-exercise/12-set counted workout and 12-slot rest traversal also pass.
+- [Rolling browser flow](../tests/e2e/rolling-scheduling.spec.ts) exercises real checkpoint and backend behavior: full completion offline, reconnecting once, repeated routines after reload, partial no-count and opt-in, rest recommendations, and an explicit early start ended without advancement. It checks 320 px layout overflow and captures recommendation/rest screenshots.
+
+Playwright's spawned development server explicitly uses loopback Firebase emulators regardless of the local environment file. When reusing an already-running server, start that server in emulator mode too. The Rolling WebKit flow records narrowly matched canceled loopback Auth lookup or Firestore channel diagnostics only during explicit navigation/offline transitions; all other page errors fail. Backend state and persistence assertions remain required.
+
+No production deployment or physical-device installation is implied. The existing approximately 548 kB Firestore SDK chunk warning remains. Production service-worker behavior was not re-certified for this increment.
+
 ## Workout logging verification on 2026-11-26
 
 The resumed Phase 3 implementation passed the following executed checks. Earlier Phase 2 results below describe that earlier implementation.
@@ -20,7 +38,7 @@ An earlier WebKit foundation run timed out during a stalled emulator Firestore p
 - [Workout browser flow](../tests/e2e/workouts.spec.ts) checks real device checkpoints and backend actuals, reload/timer recovery, frozen snapshots after routine edits, offline completion and cloud confirmation, previous performance, ended-early history, and desktop/tablet/mobile/narrow-screen overflow.
 - [Workout recovery browser tests](../tests/e2e/workout-recovery.spec.ts) check secondary-tab locking and takeover, plus competing offline browser contexts whose rejected actuals survive reload and recovery download until an explicit cloud-version choice. These adverse concurrency cases run in desktop Chromium; their two mobile WebKit variants are intentionally skipped. The primary workout flow runs on both browser projects.
 
-Cloud acknowledgment is asserted separately from local checkpoint success. Automated browser checks do not certify production Firebase connectivity, physical iPhone behavior, background alerts, or recovery from operating-system storage eviction. The production-mode offline smoke check above covers cached Chromium reloads with local emulators; production hosting and real-device checks remain separate. Completing a workout does not advance a split; scheduling/recommendation checks belong to Phase 4.
+Cloud acknowledgment is asserted separately from local checkpoint success. Automated browser checks do not certify production Firebase connectivity, physical iPhone behavior, background alerts, or recovery from operating-system storage eviction. The production-mode offline smoke check above covers cached Chromium reloads with local emulators; production hosting and real-device checks remain separate. At that Phase 3 checkpoint, completing a workout did not advance a split; the initial Rolling checks above cover the subsequent increment.
 
 ## Training configuration verification on 2026-11-25
 
@@ -77,4 +95,4 @@ Inspect desktop and iPhone-sized authentication, all onboarding steps, Today, Pl
 
 Use a production build to inspect service-worker updates and cached assets. Use a physical iPhone over HTTPS to check Safari, Add to Home Screen, safe areas, virtual keyboards, reload/background behavior, and storage recovery. Physical-device testing remains outstanding; simulated WebKit is not a substitute.
 
-Workout interruption/recovery, offline completion, rejected/conflicting writes, and duplicate-submission behavior now have the Phase 3 checks described above. Scheduling calendar boundaries, sequence advancement, and deterministic recommendations remain Phase 4 requirements. Do not interpret workout checks as coverage for those unimplemented features.
+Workout interruption/recovery, offline completion, rejected/conflicting writes, and duplicate-submission behavior have the Phase 3 checks described above. Initial Rolling calendar boundaries, sequence advancement, and deterministic selection have the additional checks above. Fixed calendar actions, Adaptive scoring, availability, and future overrides still require their own implementation and validation.

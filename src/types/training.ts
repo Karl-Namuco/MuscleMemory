@@ -1,3 +1,5 @@
+import type { FixedSchedule } from './fixedScheduling'
+
 export const MUSCLE_GROUPS = [
   'Chest',
   'Front deltoids',
@@ -146,6 +148,22 @@ export interface TrainingData {
   routines: Routine[]
   splits: TrainingSplit[]
   activeSplitId: string | null
+  fixedSchedules: FixedSchedule[]
+  buildFixedSchedule: (input: {
+    splitId: string
+    startDate: string
+    timeZone: string
+    preferredDays: number[]
+    expectedRevision?: number
+  }) => Promise<void>
+  editFixedSchedule: (
+    id: string,
+    expectedRevision: number,
+    action:
+      | { kind: 'move'; occurrenceId: string; date: string }
+      | { kind: 'swap'; occurrenceId: string; otherOccurrenceId: string }
+      | { kind: 'skip'; occurrenceId: string },
+  ) => Promise<void>
   loading: boolean
   error: string | null
   hasPendingWrites: boolean

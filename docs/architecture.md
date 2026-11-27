@@ -4,16 +4,17 @@
 
 The client uses React, Vite, strict TypeScript, React Router, React Hook Form, Zod, Tailwind CSS, and selected Radix controls. Firebase Authentication provides email/password accounts. Firestore stores private profile, training configuration, and workout data. Dexie stores recoverable account-scoped drafts and workout checkpoints. Vite PWA generates the production asset cache and manifest.
 
-| Layer        | Responsibility                                                                | Location                                                                                                         |
-| ------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Application  | Routing, account gates, responsive shell                                      | [app](../src/app/)                                                                                               |
-| Features     | Authentication, onboarding, profile, training configuration, logging, history | [features](../src/features/)                                                                                     |
-| Services     | Firebase initialization, account lifecycle, repository operations             | [services](../src/services/)                                                                                     |
-| Validation   | Runtime account, training, workout, and checkpoint validation                 | [schemas](../src/schemas/)                                                                                       |
-| Types        | Stored account, training, and workout contracts                               | [types](../src/types/)                                                                                           |
-| Local drafts | Account-scoped forms and workout interruption recovery                        | [onboarding drafts](../src/features/onboarding/draft.ts), [workout storage](../src/services/workouts/storage.ts) |
+| Layer        | Responsibility                                                                                         | Location                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Application  | Routing, account gates, responsive shell                                                               | [app](../src/app/)                                                                                               |
+| Features     | Authentication, onboarding, profile, training configuration, logging, history, Rolling recommendations | [features](../src/features/)                                                                                     |
+| Domain       | Deterministic Rolling selection, planned coverage, and cursor advancement                              | [scheduling](../src/domain/scheduling/)                                                                          |
+| Services     | Firebase initialization, account lifecycle, repository operations                                      | [services](../src/services/)                                                                                     |
+| Validation   | Runtime account, training, workout, and checkpoint validation                                          | [schemas](../src/schemas/)                                                                                       |
+| Types        | Stored account, training, and workout contracts                                                        | [types](../src/types/)                                                                                           |
+| Local drafts | Account-scoped forms and workout interruption recovery                                                 | [onboarding drafts](../src/features/onboarding/draft.ts), [workout storage](../src/services/workouts/storage.ts) |
 
-Routes wait for authentication resolution. An unapproved account sees the approval screen. An approved account with incomplete onboarding enters setup before the authenticated shell. Completed accounts can open Today, Plan, Train, History, Progress, Profile, and Settings. Plan manages routines and splits; Train starts or resumes a workout and links to completed or ended-early history. Progress analytics and adaptive scheduling remain upcoming features.
+Routes wait for authentication resolution. An unapproved account sees the approval screen. An approved account with incomplete onboarding enters setup before the authenticated shell. Completed accounts can open Today, Plan, Train, History, Progress, Profile, and Settings. Plan manages routines and splits; Today and Train recommend the exact next workout for the active Rolling split. Train also starts standalone library workouts, resumes active sessions, and links to completed or ended-early history. Progress analytics, Fixed scheduling, and Adaptive scoring remain upcoming features.
 
 ## Current database model
 
@@ -39,13 +40,13 @@ Production builds precache application assets. The development server intentiona
 
 Built-in exercises are versioned application data. Custom exercises, routines, splits, and the active split are private to each approved account:
 
-| Path under `users/{uid}`                        | Contents                                                                         |
-| ----------------------------------------------- | -------------------------------------------------------------------------------- |
-| `customExercises/{id}`                          | Movement details, tracking type, muscles, cues, alternatives, and archive state  |
-| `routines/{id}`                                 | Exercise snapshots, ordered planned sets, rests, optional entries, and supersets |
-| `routines/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with a routine           |
-| `splits/{id}`                                   | Up to 12 ordered routine/rest slots and a future scheduling-style preference     |
-| `trainingSettings/current`                      | Active split identifier                                                          |
+| Path under `users/{uid}`                        | Contents                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `customExercises/{id}`                          | Movement details, tracking type, muscles, cues, alternatives, and archive state                  |
+| `routines/{id}`                                 | Exercise snapshots, ordered planned sets, rests, optional entries, and supersets                 |
+| `routines/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with a routine                           |
+| `splits/{id}`                                   | Up to 12 ordered routine/rest slots, implemented Rolling mode, and reserved Fixed/Adaptive modes |
+| `trainingSettings/current`                      | Active split identifier                                                                          |
 
 Routines support up to 20 exercises and 12 sets per exercise. Firestore rules have a 1,000-expression limit per write, so each routine save includes one to four validation pages of at most six exercises. Page rules validate each entry; root rules require their exact concatenation, owner, revision, and mutation identifier to match the full routine. Pages cannot be read, listed, deleted, or replaced independently by a client. This preserves the full routine shape and adds one to four writes per routine save. Template batches contain only routines of six exercises or fewer and stay within the batch access budget.
 
@@ -59,11 +60,11 @@ Lists load the 200 most recently changed records per collection. The active spli
 
 ## Workout logging and history
 
-| Path under `users/{uid}`                               | Contents                                                                                                                                               |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `workoutSessions/{id}`                                 | Routine revision/name, exercise and planned-set snapshots, actual sets, session notes, elapsed time, saved rest-timer deadline, and lifecycle metadata |
-| `workoutSessions/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with each session revision                                                                     |
-| `workoutState/current`                                 | Revision-checked pointer to the account's single active workout                                                                                        |
+| Path under `users/{uid}`                               | Contents                                                                                                                                                                                           |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workoutSessions/{id}`                                 | Routine revision/name, exercise and planned-set snapshots, actual sets, session notes, elapsed time, saved rest-timer deadline, lifecycle metadata, and optional frozen Rolling token/count choice |
+| `workoutSessions/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with each session revision                                                                                                                 |
+| `workoutState/current`                                 | Revision-checked pointer to the account's single active workout and per-split `rollingProgress` cursors                                                                                            |
 
 The [workout contracts](../src/types/workout.ts) and [strict runtime schemas](../src/schemas/workout.ts) separate planned targets from actual performance. Actual inputs start empty. The five tracking types are weight/reps, reps, assisted reps, duration, and distance/duration. Weight is stored in kilograms, distance in meters, and duration in seconds; displayed weight follows the account's kilogram/pound preference. RPE is optional, from 1 to 10. Only sets explicitly marked complete contribute to totals. Assistance is retained as assistance and excluded from external lifted volume.
 
@@ -71,7 +72,7 @@ Starting a routine copies its revision, name, exercises, planned sets, rest valu
 
 Elapsed time is recovered from `startedAt`. The rest timer stores `timerEndAt`, recomputes the remaining interval after reload or background suspension, and does not write once per timer tick. Completing a set can start its configured rest. The timer supports adding 30 seconds and dismissal; it does not provide background alerts.
 
-The lifecycle is `active` to `completed` or `abandoned`. Finishing requires at least one completed set; a confirmation describes partial completion and preserves incomplete entries. **End early** keeps the session and performed work as `abandoned`, including sessions without completed sets. Terminal sessions have an end timestamp, clear the timer, and cannot be updated or deleted through client rules. Completed sessions use their stable session ID as `completionKey`; duplicate finish submissions cannot create a second history identity. Starting and finishing update the session and active-workout pointer atomically. Revision ancestry rejects stale or competing writes; conflicting devices cannot silently replace the winning active session.
+The lifecycle is `active` to `completed` or `abandoned`. Finishing requires at least one completed set; a confirmation describes partial completion and preserves incomplete entries. A scheduled workout automatically counts toward its split when all frozen planned sets are performed. Partial planned coverage includes optional exercises and warmups; removing logged sets does not shrink the plan. Partial sessions only count after selecting the initially unchecked **Count this workout toward my split** option. **End early** keeps the session and performed work as `abandoned`, including sessions without completed sets, and never advances the split. Terminal sessions have an end timestamp, clear the timer, and cannot be updated or deleted through client rules. Completed sessions use their stable session ID as `completionKey`; duplicate finish submissions cannot create a second history identity. Starting and finishing update the session and active-workout pointer atomically; a qualifying finish also advances the matching Rolling cursor in that batch. Revision ancestry rejects stale or competing writes; conflicting devices cannot silently replace the winning active session.
 
 Each workout supports up to 20 exercises with 1 to 12 planned and actual sets per exercise. To stay within the Firestore expression budget, saves include one to four validation pages with at most five exercises each. Rules require the exact page concatenation and matching owner, session, revision, and mutation. Page writes are tied to a fresh parent revision; pages cannot be read, listed, deleted, or changed after terminal completion through client rules. Rules enforce lifecycle, metadata, pointer consistency, entry shape, snapshots' basic bounds, and set-list bounds. Individual planned/logged set fields, tracking-specific actuals, unique IDs, and remaining snapshot enums are enforced by strict client schemas on every read/write, rather than all being duplicated in rules. Direct administrative or custom-client writes can therefore store application-invalid nested values; the application reports validation errors instead of rendering them.
 
@@ -79,15 +80,23 @@ The history listener loads at most the 200 most recently changed sessions. Activ
 
 ## Workout checkpoints and conflict recovery
 
-The [workout provider](../src/services/workouts/WorkoutProvider.tsx) writes UID/session-scoped Dexie checkpoints before scheduling cloud writes. These records retain the editable session, base revision, interrupted write attempt, and conflict state until cloud acknowledgment. Newer edits are serialized behind pending attempts, including when the server snapshot arrives before the batch promise resolves. An offline start followed by offline completion keeps one session identity as the initial active write and terminal revision synchronize.
+The [workout provider](../src/services/workouts/WorkoutProvider.tsx) writes UID/session-scoped Dexie checkpoints before scheduling cloud writes. These records retain the editable session, base revision, baseline workout state, interrupted write attempt including its state, and conflict state until cloud acknowledgment. Frozen Rolling tokens and cursor changes follow this same checkpoint/retry path. Newer edits are serialized behind pending attempts, including when the server snapshot arrives before the batch promise resolves. An offline start followed by offline completion keeps one session identity as the initial active write and terminal revision synchronize; only the qualifying terminal batch advances progress.
 
 A per-UID Web Lock permits one workout writer per browser origin. Other tabs show the workout read only and provide **Retry synchronization** after the editing tab closes. A browser without Web Locks cannot safely edit workouts. Generation guards prevent a delayed save from a previous account from publishing its state in the next account's UI. Failed device writes keep the latest editor input visible, offer a retry, and guard navigation/sign-out; input that never reaches a checkpoint cannot survive a forced reload.
 
 Rejected or conflicting cloud saves preserve the local checkpoint. Users can download workout recovery, retry synchronization, or explicitly select **Use cloud version** for a rejected record. Unconfirmed queued writes cannot be discarded through that action. Unreadable records can be downloaded before an explicit clear operation removes only malformed records for the current UID; usable checkpoints and other accounts' records remain. Recovery downloads are local diagnostic/recovery copies, not complete account exports or automatic imports.
 
-## Planned scheduling and recovery data
+## Initial Phase 4: Rolling scheduling
 
-Availability, dated session occurrences, sequence-slot tokens, advancement events, soreness inputs, and derived analytics remain future work. Completing a workout currently records history and clears the active-workout pointer; it does not advance the active split or recommend the next routine. Phase 4 must add explicit qualifying completion and unique sequence tokens so an old offline completion cannot advance a reset or newer cycle.
+The [Rolling domain module](../src/domain/scheduling/rolling.ts) deterministically selects the next training slot from the active split, routines, saved progress, current instant, and account timezone. Today and Train display that exact selection. Starting it snapshots an immutable `splitContext` with `splitId`, `splitRevision`, `slotId`, and `sequence`. Library starts remain standalone and do not claim a sequence, even when the routine is part of the active split. Existing pre-feature sessions without a sequence cannot advance a split.
+
+`rollingProgress` is keyed by split ID. Each cursor stores `splitRevision`, `sequence`, `lastSlotId`, `lastSessionId`, and `completedAt`. The sequence identifies the next occurrence, including repeated uses of the same routine and wrapping cycles. A counted completion atomically saves terminal history, clears the active pointer, and replaces only its matching cursor. Rules require the prior session to be active, the terminal session to be completed and marked `countsForSplit`, an immutable matching token, the correct next non-rest slot and routine, an active unchanged Rolling split, ordered completion timestamps, and one sequence increment within safe integer bounds. Standalone cursor changes and removal or mutation of unrelated progress are rejected. Missing cursor/count/token fields remain readable for older stored records.
+
+Switching active splits preserves their individual cursors. Editing a split starts the new revision at the first non-rest slot. A session only counts against the active matching split, current revision, and next token; a changed or deactivated plan still allows completed history with `countsForSplit: false`. There is no reset interface yet.
+
+Consecutive rest slots after a counted completion reserve full dates in the account timezone. With `N` rest slots, the next training date is the completion's local date plus `N + 1` days. No rest slots means immediate availability. Leading rest slots do not block a new revision's first workout. The interface offers **Train early** with explicit confirmation. Missed dates and week boundaries do not consume slots or add catch-up volume.
+
+Fixed dated occurrences, Adaptive scoring, availability, time adaptation, explicit repeat/skip/swap/reset events, soreness inputs, and derived analytics remain future work. See [recommendation behavior and plans](./recommendation-engine.md).
 
 ## Limitations
 
@@ -95,7 +104,7 @@ Availability, dated session occurrences, sequence-slot tokens, advancement event
 - Browser storage can be evicted or manually cleared. Local drafts are not backups.
 - iOS can suspend JavaScript. Workout timers recover from timestamps; background alerts are not implemented.
 - WebKit automation does not certify physical iPhone installation, keyboard, backgrounding, or storage behavior.
-- The current application has no adaptive recommendation engine, automatic split advancement, analytics, complete data export, account-deletion workflow, or terminal-history editing.
+- Rolling recommendations and qualifying advancement are implemented. Fixed scheduling, Adaptive scoring, schedule overrides including reset, analytics, complete data export, account deletion, and terminal-history editing remain unimplemented.
 - Firestore quotas and Spark limits can interrupt service. Query/listener scope must remain bounded as features grow.
 - The production build separates vendor chunks, but the Firebase SDK chunk still produces a size warning. Further bundle and loading optimization belongs to Phase 6.
-- The owner reported deploying Phase 2. The agent has not published Phase 3; the updated workout client and compatible rules must be deployed together.
+- The owner reported deploying Phase 2. The agent has not published Phase 3 or this initial Phase 4 increment. Release the updated client and compatible rules together, and refresh older installed clients so they understand the new scheduling fields.

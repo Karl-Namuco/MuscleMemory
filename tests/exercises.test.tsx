@@ -94,6 +94,7 @@ beforeEach(() => {
     customExercises: [],
     routines: [],
     splits: [],
+    fixedSchedules: [],
     activeSplitId: null,
     loading: false,
     error: null,
@@ -110,6 +111,8 @@ beforeEach(() => {
     archiveSplit: vi.fn(),
     setActiveSplit: vi.fn(),
     createSplitFromTemplate: vi.fn(),
+    buildFixedSchedule: vi.fn(),
+    editFixedSchedule: vi.fn(),
     refresh: vi.fn(),
     clearError: vi.fn(),
   }

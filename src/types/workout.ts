@@ -6,6 +6,8 @@ export interface LoggedSet {
   id: string
   type: PlannedSet['type']
   weightKg: number | null
+  /** Entry/display unit only; actual load remains canonical kilograms. */
+  inputWeightUnit?: 'kg' | 'lb'
   reps: number | null
   durationSeconds: number | null
   distanceMeters: number | null
@@ -31,6 +33,8 @@ export interface WorkoutSplitContext {
   splitId: string
   splitRevision: number
   slotId: string
+  /** Expected Rolling completion sequence, frozen when the recommended slot starts. */
+  sequence?: number
 }
 
 export interface WorkoutSession {
@@ -54,6 +58,14 @@ export interface WorkoutSession {
   exercises: WorkoutExercise[]
   splitContext: WorkoutSplitContext | null
   completionKey: string | null
+  /** Explicitly recorded on completion; legacy and unscheduled sessions do not advance. */
+  countsForSplit?: boolean
+  fixedContext?: {
+    scheduleId: string
+    generationId: string
+    occurrenceId: string
+    occurrenceVersion: number
+  }
 }
 
 export interface RestTimer {

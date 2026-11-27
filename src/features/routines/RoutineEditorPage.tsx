@@ -23,6 +23,7 @@ import {
   type RoutineInput,
 } from '../../types/training'
 import { clearRoutineDraft, readRoutineDraft, saveRoutineDraft } from './draft'
+import { InlineExerciseForm } from '../exercises/InlineExerciseForm'
 import './routines.css'
 
 const emptyRoutine = (): RoutineInput => ({
@@ -391,6 +392,12 @@ function RoutineEditor({
         <div className="notice" role="status">
           {draftMessage}
         </div>
+      )}
+      {training.hasPendingWrites && (
+        <p className="notice" role="status">
+          Training changes are saved on this device and waiting for cloud confirmation. Keep your
+          routine draft until they finish syncing.
+        </p>
       )}
       {concurrentlyChanged && (
         <div className="notice" role="alert">
@@ -793,12 +800,16 @@ function RoutineEditor({
         open={pickerOpen && !saving}
         onOpenChange={setPickerOpen}
         exercises={training.exercises}
-        add={(exercise) => {
+        uid={uid}
+        draftKey={`${uid}:inline-routine:${routeKey}`}
+        add={(exercise, created) => {
           setInput((current) => ({
             ...current,
             exercises: [...current.exercises, createRoutineExercise(exercise)],
           }))
           setErrors({})
+          if (created)
+            setDraftMessage('Your custom exercise was added. Save this routine when you are ready.')
           setPickerOpen(false)
         }}
       />
@@ -900,16 +911,22 @@ function ExercisePicker({
   open,
   onOpenChange,
   exercises,
+  uid,
+  draftKey,
   add,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   exercises: Exercise[]
-  add: (exercise: Exercise) => void
+  uid?: string
+  draftKey: string
+  add: (exercise: Exercise, created?: boolean) => void
 }) {
   const [query, setQuery] = useState('')
   const [equipment, setEquipment] = useState('')
   const [muscle, setMuscle] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [creationSaving, setCreationSaving] = useState(false)
   const matches = exercises.filter(
     (exercise) =>
       !exercise.archived &&
@@ -920,7 +937,12 @@ function ExercisePicker({
         .includes(query.trim().toLowerCase()),
   )
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!creationSaving) onOpenChange(next)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
         <Dialog.Content className="dialog-content routine-picker">
@@ -932,78 +954,108 @@ function ExercisePicker({
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
-              <button className="icon-button" aria-label="Close exercise picker">
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Close exercise picker"
+                disabled={creationSaving}
+              >
                 <X aria-hidden="true" size={20} />
               </button>
             </Dialog.Close>
           </div>
-          <label className="routine-search">
-            <Search size={18} aria-hidden="true" />
-            <span className="routine-visually-hidden">Search exercises</span>
-            <input
-              className="input"
-              placeholder="Search exercises"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+          {creating && uid ? (
+            <InlineExerciseForm
+              uid={uid}
+              draftKey={draftKey}
+              initialName={query.trim()}
+              onCancel={() => setCreating(false)}
+              onSavingChange={setCreationSaving}
+              onAdd={(exercise) => {
+                setCreating(false)
+                setQuery('')
+                add(exercise, true)
+              }}
             />
-          </label>
-          <div className="routine-picker-filters">
-            <label className="field">
-              <span>Equipment</span>
-              <select
-                className="select"
-                value={equipment}
-                onChange={(event) => setEquipment(event.target.value)}
-              >
-                <option value="">All equipment</option>
-                {EXERCISE_EQUIPMENT.map((item) => (
-                  <option value={item} key={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Primary muscle</span>
-              <select
-                className="select"
-                value={muscle}
-                onChange={(event) => setMuscle(event.target.value)}
-              >
-                <option value="">All muscles</option>
-                {MUSCLE_GROUPS.map((item) => (
-                  <option value={item} key={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <p className="routine-meta" aria-live="polite">
-            {matches.length} {matches.length === 1 ? 'exercise' : 'exercises'}
-          </p>
-          <div className="routine-picker-results">
-            {matches.map((exercise) => (
+          ) : (
+            <>
+              <label className="routine-search">
+                <Search size={18} aria-hidden="true" />
+                <span className="routine-visually-hidden">Search exercises</span>
+                <input
+                  className="input"
+                  placeholder="Search exercises"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </label>
+              <div className="routine-picker-filters">
+                <label className="field">
+                  <span>Equipment</span>
+                  <select
+                    className="select"
+                    value={equipment}
+                    onChange={(event) => setEquipment(event.target.value)}
+                  >
+                    <option value="">All equipment</option>
+                    {EXERCISE_EQUIPMENT.map((item) => (
+                      <option value={item} key={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Primary muscle</span>
+                  <select
+                    className="select"
+                    value={muscle}
+                    onChange={(event) => setMuscle(event.target.value)}
+                  >
+                    <option value="">All muscles</option>
+                    {MUSCLE_GROUPS.map((item) => (
+                      <option value={item} key={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <button
                 type="button"
-                className="routine-picker-item"
-                key={exercise.id}
-                onClick={() => add(exercise)}
-                aria-label={`Add ${exercise.name}`}
+                className="btn btn-secondary routine-create-exercise"
+                disabled={!uid}
+                onClick={() => setCreating(true)}
               >
-                <span>
-                  <strong>{exercise.name}</strong>
-                  <small>
-                    {exercise.equipment} · {exercise.primaryMuscles.join(', ')}
-                  </small>
-                </span>
-                <Plus size={20} aria-hidden="true" />
+                <Plus size={18} aria-hidden="true" /> Create your own exercise
               </button>
-            ))}
-            {matches.length === 0 && (
-              <p className="muted">No exercises match. Try another search or filter.</p>
-            )}
-          </div>
+              <p className="routine-meta" aria-live="polite">
+                {matches.length} {matches.length === 1 ? 'exercise' : 'exercises'}
+              </p>
+              <div className="routine-picker-results">
+                {matches.map((exercise) => (
+                  <button
+                    type="button"
+                    className="routine-picker-item"
+                    key={exercise.id}
+                    onClick={() => add(exercise)}
+                    aria-label={`Add ${exercise.name}`}
+                  >
+                    <span>
+                      <strong>{exercise.name}</strong>
+                      <small>
+                        {exercise.equipment} · {exercise.primaryMuscles.join(', ')}
+                      </small>
+                    </span>
+                    <Plus size={20} aria-hidden="true" />
+                  </button>
+                ))}
+                {matches.length === 0 && (
+                  <p className="muted">No exercises match. Try another search or filter.</p>
+                )}
+              </div>
+            </>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

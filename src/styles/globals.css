@@ -672,6 +672,12 @@ textarea.input {
   grid-template-columns: 1.45fr 1fr;
   gap: 22px;
 }
+.today-lower-grid > .week-card:only-child {
+  grid-column: 1 / -1;
+}
+.today-page > .rolling-recommendation {
+  margin-bottom: 28px;
+}
 .week-card,
 .next-step-card {
   padding: 24px;

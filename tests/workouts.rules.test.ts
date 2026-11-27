@@ -142,6 +142,51 @@ function finished(value: WorkoutSession, status: 'completed' | 'abandoned'): Wor
   }
 }
 
+function rollingSession(id = 'rolling-one', sequence = 0, slotId = 'slot-one'): WorkoutSession {
+  return {
+    ...session(id),
+    countsForSplit: false,
+    splitContext: { splitId: 'split-one', splitRevision: 1, slotId, sequence },
+  }
+}
+function rollingProgress(value: WorkoutSession) {
+  const context = value.splitContext!
+  return {
+    splitRevision: context.splitRevision,
+    sequence: context.sequence! + 1,
+    lastSlotId: context.slotId,
+    lastSessionId: value.id,
+    completedAt: value.endedAt!,
+  }
+}
+async function seedRollingConfiguration(
+  options: { revision?: number; mode?: string; active?: string } = {},
+) {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore()
+    const batch = writeBatch(db)
+    batch.set(doc(db, 'users', 'alex', 'splits', 'split-one'), {
+      ...metadata('split-one'),
+      revision: options.revision ?? 1,
+      archived: false,
+      mode: options.mode ?? 'rolling',
+      slots: [
+        { id: 'opening-rest', label: 'Rest', routineId: null, isRestDay: true },
+        { id: 'slot-one', label: 'Upper A', routineId: 'routine-one', isRestDay: false },
+        { id: 'middle-rest', label: 'Rest', routineId: null, isRestDay: true },
+        { id: 'slot-two', label: 'Upper B', routineId: 'routine-one', isRestDay: false },
+        { id: 'closing-rest', label: 'Rest', routineId: null, isRestDay: true },
+      ],
+    })
+    batch.set(doc(db, 'users', 'alex', 'trainingSettings', 'current'), {
+      ...metadata('current'),
+      archived: false,
+      activeSplitId: options.active ?? 'split-one',
+    })
+    await batch.commit()
+  })
+}
+
 describe('private workout rules', () => {
   beforeAll(async () => {
     environment = await initializeTestEnvironment({
@@ -259,6 +304,385 @@ describe('private workout rules', () => {
         }),
       )
     }
+  })
+
+  it('atomically advances Rolling tokens, skips rest slots, wraps, and rejects duplicate completion', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    let current = {
+      ...state(null),
+      rollingProgress: {} as Record<string, ReturnType<typeof rollingProgress>>,
+    }
+    for (const [sequence, slotId] of ['slot-one', 'slot-two', 'slot-one'].entries()) {
+      const value = rollingSession(`rolling-${sequence}`, sequence, slotId)
+      const active =
+        sequence === 0
+          ? { ...current, activeSessionId: value.id }
+          : { ...next(current), activeSessionId: value.id }
+      await assertSucceeds(writeSession(db, value, active))
+      const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+      const advanced = {
+        ...next(active),
+        activeSessionId: null,
+        rollingProgress: { 'split-one': rollingProgress(terminal) },
+      }
+      await assertFails(writeSession(db, terminal))
+      await assertSucceeds(writeSession(db, terminal, advanced))
+      expect((await getDoc(stateReference(db))).data()?.rollingProgress['split-one'].sequence).toBe(
+        sequence + 1,
+      )
+      await assertFails(writeSession(db, terminal, advanced))
+      current = advanced
+    }
+  })
+
+  it('requires immutable matching tokens and the expected slot before counting completion', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    const value = rollingSession()
+    const active = { ...state(value.id), rollingProgress: {} }
+    await writeSession(db, value, active)
+    const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+    const advanced = {
+      ...next(active),
+      activeSessionId: null,
+      rollingProgress: { 'split-one': rollingProgress(terminal) },
+    }
+    for (const progress of [
+      { ...rollingProgress(terminal), sequence: 2 },
+      { ...rollingProgress(terminal), splitRevision: 2 },
+      { ...rollingProgress(terminal), lastSessionId: 'other' },
+      { ...rollingProgress(terminal), lastSlotId: 'slot-two' },
+      { ...rollingProgress(terminal), completedAt: terminal.endedAt! + 1 },
+      { ...rollingProgress(terminal), unexpected: true },
+    ])
+      await assertFails(
+        writeSession(db, terminal, {
+          ...advanced,
+          rollingProgress: { 'split-one': progress },
+        }),
+      )
+    await assertFails(writeSession(db, terminal, { ...next(active), activeSessionId: null }))
+    await assertFails(
+      writeSession(
+        db,
+        {
+          ...terminal,
+          splitContext: { ...value.splitContext!, sequence: 1 },
+        },
+        advanced,
+      ),
+    )
+    await assertFails(setDoc(stateReference(db), advanced))
+    await assertSucceeds(writeSession(db, terminal, advanced))
+  })
+
+  it('never advances a standalone state, start, abandoned workout, or uncounted completion', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    const value = rollingSession()
+    const forged = { 'split-one': rollingProgress(finished(value, 'completed')) }
+    await assertFails(setDoc(stateReference(db), { ...state(null), rollingProgress: forged }))
+    await assertFails(writeSession(db, value, { ...state(value.id), rollingProgress: forged }))
+    const active = { ...state(value.id), rollingProgress: {} }
+    await assertSucceeds(writeSession(db, value, active))
+    await assertFails(setDoc(stateReference(db), { ...next(active), rollingProgress: forged }))
+    for (const status of ['completed', 'abandoned'] as const) {
+      const terminal = { ...finished(value, status), countsForSplit: false }
+      await assertFails(
+        writeSession(db, terminal, {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: forged,
+        }),
+      )
+    }
+    await assertFails(
+      writeSession(
+        db,
+        { ...finished(value, 'abandoned'), countsForSplit: true },
+        {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: forged,
+        },
+      ),
+    )
+    await assertSucceeds(
+      writeSession(
+        db,
+        { ...finished(value, 'abandoned'), countsForSplit: false },
+        {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: {},
+        },
+      ),
+    )
+  })
+
+  it('rejects missing, stale, wrong-slot, and unrelated routine tokens while preserving history', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    const candidates = [
+      session('missing-token'),
+      rollingSession('stale-sequence', 3),
+      rollingSession('wrong-slot', 0, 'slot-two'),
+      { ...rollingSession('wrong-routine'), routineId: 'unrelated-routine' },
+    ]
+    for (const value of candidates) {
+      const existing = (await getDoc(stateReference(db))).data()
+      const active = existing
+        ? { ...next(existing as ReturnType<typeof metadata>), activeSessionId: value.id }
+        : state(value.id)
+      await assertSucceeds(writeSession(db, value, active))
+      const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+      await assertFails(
+        writeSession(db, terminal, {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: {
+            'split-one': {
+              ...rollingProgress(terminal),
+              sequence: (value.splitContext?.sequence ?? 0) + 1,
+            },
+          },
+        }),
+      )
+      await assertSucceeds(
+        writeSession(
+          db,
+          { ...terminal, countsForSplit: false },
+          {
+            ...next(active),
+            activeSessionId: null,
+          },
+        ),
+      )
+    }
+  })
+
+  it('rejects stale split revisions, non-Rolling mode, and a changed active split without losing completion', async () => {
+    await approve('alex')
+    const db = userDb()
+    for (const [index, options] of [
+      { revision: 2 },
+      { mode: 'adaptive' },
+      { active: 'another-split' },
+    ].entries()) {
+      await seedRollingConfiguration(options)
+      const value = rollingSession(`changed-split-${index}`)
+      const existing = (await getDoc(stateReference(db))).data()
+      const active = existing
+        ? { ...next(existing as ReturnType<typeof metadata>), activeSessionId: value.id }
+        : state(value.id)
+      await assertSucceeds(writeSession(db, value, active))
+      const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+      await assertFails(
+        writeSession(db, terminal, {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: { 'split-one': rollingProgress(terminal) },
+        }),
+      )
+      await assertSucceeds(
+        writeSession(
+          db,
+          { ...terminal, countsForSplit: false },
+          {
+            ...next(active),
+            activeSessionId: null,
+          },
+        ),
+      )
+    }
+  })
+
+  it('preserves every other split cursor and restarts the sequence after a split edit', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    const unrelated = {
+      splitRevision: 1,
+      sequence: 5,
+      lastSlotId: 'old-slot',
+      lastSessionId: 'old-workout',
+      completedAt: 999,
+    }
+    const stale = { ...unrelated, splitRevision: 7 }
+    const value = rollingSession()
+    const active = {
+      ...state(value.id),
+      rollingProgress: { 'split-one': stale, 'other-split': unrelated },
+    }
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(stateReference(context.firestore()), active)
+    })
+    await assertSucceeds(writeSession(db, value))
+    const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+    const advanced = {
+      ...next(active),
+      activeSessionId: null,
+      rollingProgress: { ...active.rollingProgress, 'split-one': rollingProgress(terminal) },
+    }
+    await assertFails(
+      writeSession(db, terminal, {
+        ...advanced,
+        rollingProgress: { 'split-one': rollingProgress(terminal) },
+      }),
+    )
+    await assertFails(
+      writeSession(db, terminal, {
+        ...advanced,
+        rollingProgress: {
+          ...advanced.rollingProgress,
+          'other-split': { ...unrelated, sequence: 6 },
+        },
+      }),
+    )
+    await assertSucceeds(writeSession(db, terminal, advanced))
+    const another = session('legacy-after-progress')
+    await assertFails(
+      writeSession(db, another, {
+        ...next(advanced),
+        activeSessionId: another.id,
+        rollingProgress: {},
+      }),
+    )
+    const legacyState: DocumentData = { ...next(advanced) }
+    delete legacyState.rollingProgress
+    await assertFails(writeSession(db, another, { ...legacyState, activeSessionId: another.id }))
+    await assertSucceeds(
+      writeSession(db, another, { ...next(advanced), activeSessionId: another.id }),
+    )
+  })
+
+  it('rejects a completion older than its cursor and reuse of its last session identity', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    for (const [index, prior] of [
+      { lastSessionId: 'prior-workout', completedAt: 2000 },
+      { lastSessionId: 'chronology-1', completedAt: 999 },
+    ].entries()) {
+      const value = rollingSession(`chronology-${index}`, 1)
+      const active = {
+        ...state(value.id),
+        rollingProgress: {
+          'split-one': {
+            splitRevision: 1,
+            sequence: 1,
+            lastSlotId: 'slot-two',
+            ...prior,
+          },
+        },
+      }
+      await environment.withSecurityRulesDisabled(async (context) => {
+        await setDoc(stateReference(context.firestore()), active)
+      })
+      await assertSucceeds(writeSession(db, value))
+      const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+      await assertFails(
+        writeSession(db, terminal, {
+          ...next(active),
+          activeSessionId: null,
+          rollingProgress: { 'split-one': rollingProgress(terminal) },
+        }),
+      )
+      await assertSucceeds(
+        writeSession(
+          db,
+          { ...terminal, countsForSplit: false },
+          {
+            ...next(active),
+            activeSessionId: null,
+          },
+        ),
+      )
+    }
+  })
+
+  it('accepts the final safe token and rejects an occurrence that cannot safely increment', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    const exhausted = rollingSession('unsafe-token', Number.MAX_SAFE_INTEGER)
+    await assertFails(writeSession(db, exhausted, state(exhausted.id)))
+    const value = rollingSession('final-safe-token', Number.MAX_SAFE_INTEGER - 1, 'slot-two')
+    const active = {
+      ...state(value.id),
+      rollingProgress: {
+        'split-one': {
+          splitRevision: 1,
+          sequence: Number.MAX_SAFE_INTEGER - 1,
+          lastSlotId: 'slot-one',
+          lastSessionId: 'previous-safe-token',
+          completedAt: 999,
+        },
+      },
+    }
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(stateReference(context.firestore()), active)
+    })
+    await assertSucceeds(writeSession(db, value))
+    const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+    const advanced = {
+      ...next(active),
+      activeSessionId: null,
+      rollingProgress: { 'split-one': rollingProgress(terminal) },
+    }
+    await assertSucceeds(writeSession(db, terminal, advanced))
+    expect((await getDoc(stateReference(db))).data()?.rollingProgress['split-one'].sequence).toBe(
+      Number.MAX_SAFE_INTEGER,
+    )
+  })
+
+  it('counts a maximum-size workout through all twelve split slots within the rules budget', async () => {
+    await approve('alex')
+    await seedRollingConfiguration()
+    const db = userDb()
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await updateDoc(doc(context.firestore(), 'users', 'alex', 'splits', 'split-one'), {
+        slots: Array.from({ length: 12 }, (_, index) => ({
+          id: index === 11 ? 'slot-one' : `rest-${index}`,
+          label: index === 11 ? 'Upper' : 'Rest',
+          routineId: index === 11 ? 'routine-one' : null,
+          isRestDay: index !== 11,
+        })),
+      })
+    })
+    const value = {
+      ...rollingSession('maximum-counted'),
+      exercises: Array.from({ length: 20 }, (_, index) => {
+        const entry = exercise(index)
+        return {
+          ...entry,
+          plannedSets: Array.from({ length: 12 }, (_, setIndex) => ({
+            ...entry.plannedSets[0],
+            id: `planned-${index}-${setIndex}`,
+          })),
+          sets: Array.from({ length: 12 }, (_, setIndex) => ({
+            ...entry.sets[0],
+            id: `logged-${index}-${setIndex}`,
+          })),
+        }
+      }),
+    }
+    const active = { ...state(value.id), rollingProgress: {} }
+    await assertSucceeds(writeSession(db, value, active))
+    const terminal = { ...finished(value, 'completed'), countsForSplit: true }
+    await assertSucceeds(
+      writeSession(db, terminal, {
+        ...next(active),
+        activeSessionId: null,
+        rollingProgress: { 'split-one': rollingProgress(terminal) },
+      }),
+    )
+    expect((await getDoc(reference(db, value.id))).data()?.exercises[19].sets).toHaveLength(12)
   })
 
   it('rejects competing starts without replacing the winning session or pointer', async () => {

@@ -3,44 +3,74 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EXERCISES } from '../src/data/exercises'
+import { createFixedSchedule } from '../src/domain/scheduling/fixed'
 import { createRoutineExercise } from '../src/domain/training/helpers'
 import { createWorkoutSession } from '../src/domain/workout/helpers'
 import ActiveWorkoutPage from '../src/features/workouts/ActiveWorkoutPage'
 import TrainPage from '../src/features/workouts/TrainPage'
 import WorkoutHistoryPage from '../src/features/workouts/WorkoutHistoryPage'
 import { defaultPreferences } from '../src/types/profile'
-import type { Routine, TrackingType } from '../src/types/training'
+import type { FixedSchedule } from '../src/types/fixedScheduling'
+import type { RollingProgress } from '../src/types/scheduling'
+import type { Routine, TrackingType, TrainingSplit } from '../src/types/training'
 import type { WorkoutSession } from '../src/types/workout'
 
 const mock = vi.hoisted(() => ({
   routines: [] as Routine[],
+  splits: [] as TrainingSplit[],
+  fixedSchedules: [] as FixedSchedule[],
+  activeSplitId: null as string | null,
+  rollingProgress: {} as RollingProgress,
   sessions: [] as WorkoutSession[],
   active: null as WorkoutSession | null,
   save: vi.fn<(session: WorkoutSession) => Promise<void>>(),
-  start: vi.fn<(routine: Routine) => Promise<string>>(),
-  finish: vi.fn<(session: WorkoutSession, status: 'completed' | 'abandoned') => Promise<void>>(),
+  start:
+    vi.fn<
+      (routine: Routine, options?: { scheduled?: boolean; allowEarly?: boolean }) => Promise<string>
+    >(),
+  finish:
+    vi.fn<
+      (
+        session: WorkoutSession,
+        status: 'completed' | 'abandoned',
+        options?: { countForSplit?: boolean },
+      ) => Promise<void>
+    >(),
   retry: vi.fn(),
   download: vi.fn(),
   pending: false,
   cached: false,
   writable: true,
+  loading: false,
+  trainingPending: false,
+  trainingError: null as string | null,
   error: null as string | null,
   unit: 'kg' as 'kg' | 'lb',
 }))
 vi.mock('../src/services/training/TrainingProvider', () => ({
-  useTraining: () => ({ routines: mock.routines, exercises: EXERCISES, loading: false }),
+  useTraining: () => ({
+    routines: mock.routines,
+    exercises: EXERCISES,
+    splits: mock.splits,
+    fixedSchedules: mock.fixedSchedules,
+    activeSplitId: mock.activeSplitId,
+    loading: mock.loading,
+    hasPendingWrites: mock.trainingPending,
+    error: mock.trainingError,
+  }),
 }))
 vi.mock('../src/services/auth/AuthProvider', () => ({
   useAuth: () => ({
     user: { uid: 'test-user' },
-    account: { preferences: { ...defaultPreferences(), weightUnit: mock.unit } },
+    account: { preferences: { ...defaultPreferences(), weightUnit: mock.unit, timeZone: 'UTC' } },
   }),
 }))
 vi.mock('../src/services/workouts/WorkoutProvider', () => ({
   useWorkouts: () => ({
     sessions: mock.sessions,
     activeSession: mock.active,
-    loading: false,
+    rollingProgress: mock.rollingProgress,
+    loading: mock.loading,
     error: mock.error,
     hasPendingWrites: mock.pending,
     fromCache: mock.cached,
@@ -83,6 +113,41 @@ function active(types?: TrackingType[]) {
   return session
 }
 
+function rollingSplit(): TrainingSplit {
+  return {
+    id: 'split-test',
+    ownerId: 'test-user',
+    name: 'Upper / lower',
+    description: '',
+    mode: 'rolling',
+    slots: [
+      { id: 'upper', label: 'Upper', routineId: 'routine-test', isRestDay: false },
+      { id: 'rest', label: 'Rest', routineId: null, isRestDay: true },
+      { id: 'lower', label: 'Lower', routineId: 'routine-lower', isRestDay: false },
+    ],
+    createdAt: 1,
+    updatedAt: 1,
+    archived: false,
+    schemaVersion: 1,
+    revision: 1,
+    mutationId: 'split-mutation',
+    previousMutationId: null,
+  }
+}
+
+function useRollingSplit() {
+  const split = rollingSplit()
+  mock.splits = [split]
+  mock.activeSplitId = split.id
+  mock.routines.push({ ...routine(), id: 'routine-lower', name: 'Lower session' })
+  return split
+}
+
+function scheduleSession(session: WorkoutSession) {
+  useRollingSplit()
+  session.splitContext = { splitId: 'split-test', splitRevision: 1, slotId: 'upper', sequence: 0 }
+}
+
 function app(path: string) {
   return (
     <MemoryRouter initialEntries={[path]}>
@@ -106,6 +171,10 @@ function latestSaved() {
 
 beforeEach(() => {
   mock.routines = [routine()]
+  mock.splits = []
+  mock.fixedSchedules = []
+  mock.activeSplitId = null
+  mock.rollingProgress = {}
   mock.sessions = []
   mock.active = null
   mock.unit = 'kg'
@@ -113,6 +182,9 @@ beforeEach(() => {
   mock.pending = false
   mock.cached = false
   mock.writable = true
+  mock.loading = false
+  mock.trainingPending = false
+  mock.trainingError = null
   mock.save.mockReset().mockResolvedValue(undefined)
   mock.start.mockReset().mockResolvedValue('new-session')
   mock.finish.mockReset().mockResolvedValue(undefined)
@@ -121,6 +193,273 @@ beforeEach(() => {
 })
 
 describe('Workout logger', () => {
+  it('starts the recommended slot explicitly while library starts stay unscheduled', async () => {
+    useRollingSplit()
+    const view = render(app('/train'))
+    const recommendation = screen.getByRole('region', { name: 'Your next workout' })
+    expect(
+      within(recommendation).getByRole('heading', { name: 'Upper session' }),
+    ).toBeInTheDocument()
+    expect(recommendation).toHaveTextContent('starts your rolling cycle')
+    await userEvent
+      .setup()
+      .click(within(recommendation).getByRole('button', { name: 'Start recommended workout' }))
+    expect(mock.start).toHaveBeenCalledWith(mock.routines[0], { scheduled: true })
+    view.unmount()
+    mock.start.mockClear()
+    render(app('/train'))
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Start workout: Upper session' }))
+    expect(mock.start).toHaveBeenCalledWith(mock.routines[0])
+  })
+
+  it('requires confirmation before starting during planned rest', async () => {
+    const split = useRollingSplit()
+    mock.rollingProgress[split.id] = {
+      splitRevision: split.revision,
+      sequence: 1,
+      lastSlotId: 'upper',
+      lastSessionId: 'previous-workout',
+      completedAt: Date.now(),
+    }
+    const user = userEvent.setup()
+    render(app('/train'))
+    expect(screen.getByRole('region', { name: 'Your next workout' })).toHaveTextContent(
+      'Lower session',
+    )
+    await user.click(screen.getByRole('button', { name: 'Train early' }))
+    expect(mock.start).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent('skips the remaining rest days')
+    await user.click(screen.getByRole('button', { name: 'Keep resting' }))
+    expect(mock.start).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Train early' }))
+    await user.click(screen.getByRole('button', { name: 'Start early workout' }))
+    expect(mock.start).toHaveBeenCalledWith(mock.routines[1], { scheduled: true, allowEarly: true })
+  })
+
+  it('waits for training data before showing a recommendation', () => {
+    useRollingSplit()
+    mock.loading = true
+    render(app('/train'))
+    expect(screen.queryByRole('region', { name: 'Your next workout' })).not.toBeInTheDocument()
+  })
+
+  it.each(['active', 'pending', 'training-pending', 'error', 'training-error', 'read-only'])(
+    'disables recommended starts while %s',
+    (state) => {
+      useRollingSplit()
+      if (state === 'active') active()
+      if (state === 'pending') mock.pending = true
+      if (state === 'training-pending') mock.trainingPending = true
+      if (state === 'error') mock.error = 'Workout sync failed.'
+      if (state === 'training-error') mock.trainingError = 'Training sync failed.'
+      if (state === 'read-only') mock.writable = false
+      render(app('/train'))
+      expect(screen.getByRole('button', { name: 'Start recommended workout' })).toBeDisabled()
+      expect(mock.start).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['adaptive'] as const)(
+    'explains that %s recommendations are upcoming',
+    (mode) => {
+      const split = useRollingSplit()
+      split.mode = mode
+      render(app('/train'))
+      expect(screen.getByRole('region', { name: 'Your next workout' })).toHaveTextContent(
+        'Fixed and Adaptive recommendations are coming',
+      )
+      expect(
+        screen.queryByRole('button', { name: 'Start recommended workout' }),
+      ).not.toBeInTheDocument()
+    },
+  )
+
+  it.each([false, true])(
+    'finishes partial scheduled work with countForSplit=%s only after an explicit choice',
+    async (countForSplit) => {
+      const session = active(['weight-reps', 'reps'])
+      scheduleSession(session)
+      const user = userEvent.setup()
+      render(app(`/train/${session.id}`))
+      actual('Weight (kg)', '40')
+      actual('Reps', '8')
+      await user.click(screen.getAllByRole('checkbox')[0])
+      await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+      const dialog = screen.getByRole('dialog')
+      const inclusion = within(dialog).getByRole('checkbox', {
+        name: 'Count this workout toward my split',
+      })
+      expect(inclusion).not.toBeChecked()
+      if (countForSplit) await user.click(inclusion)
+      await user.click(within(dialog).getByRole('button', { name: 'Finish and save' }))
+      expect(mock.finish).toHaveBeenCalledWith(
+        expect.objectContaining({ id: session.id }),
+        'completed',
+        { countForSplit },
+      )
+    },
+  )
+
+  it.each([false, true])(
+    'offers explicit partial-workout consent for Fixed occurrences with countForSplit=%s',
+    async (countForSplit) => {
+      const session = active(['weight-reps', 'reps'])
+      const split = useRollingSplit()
+      split.mode = 'fixed'
+      const schedule = createFixedSchedule({
+        split,
+        routines: mock.routines,
+        startDate: new Date(session.startedAt).toISOString().slice(0, 10),
+        timeZone: 'UTC',
+        preferredDays: [],
+        generationId: 'generation-fixed',
+        now: Date.now(),
+      })
+      mock.fixedSchedules = [schedule]
+      const occurrence = schedule.occurrences[0]
+      session.splitContext = {
+        splitId: split.id,
+        splitRevision: split.revision,
+        slotId: occurrence.slotId,
+        sequence: occurrence.sequence,
+      }
+      session.fixedContext = {
+        scheduleId: schedule.id,
+        generationId: schedule.generationId,
+        occurrenceId: occurrence.id,
+        occurrenceVersion: occurrence.version,
+      }
+      const user = userEvent.setup()
+      render(app(`/train/${session.id}`))
+      actual('Weight (kg)', '40')
+      actual('Reps', '8')
+      await user.click(screen.getAllByRole('checkbox')[0])
+      await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+      const dialog = screen.getByRole('dialog')
+      const inclusion = within(dialog).getByRole('checkbox', {
+        name: 'Count this workout toward my split',
+      })
+      expect(inclusion).not.toBeChecked()
+      if (countForSplit) await user.click(inclusion)
+      await user.click(within(dialog).getByRole('button', { name: 'Finish and save' }))
+      expect(mock.finish).toHaveBeenCalledWith(
+        expect.objectContaining({ fixedContext: session.fixedContext }),
+        'completed',
+        { countForSplit },
+      )
+    },
+  )
+
+  it('automatically includes full scheduled work without a partial-workout choice', async () => {
+    const session = active()
+    scheduleSession(session)
+    const user = userEvent.setup()
+    render(app(`/train/${session.id}`))
+    actual('Weight (kg)', '40')
+    actual('Reps', '8')
+    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+    expect(within(screen.getByRole('dialog')).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('counts this workout toward your split')
+    await user.click(screen.getByRole('button', { name: 'Finish and save' }))
+    expect(mock.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id }),
+      'completed',
+    )
+  })
+
+  it.each(['loading', 'pending', 'error'])(
+    'retains partial-workout consent while the training plan is %s',
+    async (state) => {
+      const session = active(['weight-reps', 'reps'])
+      scheduleSession(session)
+      if (state === 'loading') {
+        mock.loading = true
+        mock.splits = []
+      }
+      if (state === 'pending') {
+        mock.trainingPending = true
+        mock.splits[0].revision += 1
+      }
+      if (state === 'error') {
+        mock.trainingError = 'Training plan could not be loaded.'
+        mock.splits = []
+      }
+      const user = userEvent.setup()
+      render(app(`/train/${session.id}`))
+      actual('Weight (kg)', '40')
+      actual('Reps', '8')
+      await user.click(screen.getAllByRole('checkbox')[0])
+      await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+      const dialog = screen.getByRole('dialog')
+      expect(dialog).toHaveTextContent(
+        'Split progress will be checked after your training plan finishes loading or synchronizing',
+      )
+      const consent = within(dialog).getByRole('checkbox', {
+        name: 'Count this workout toward my split',
+      })
+      expect(consent).not.toBeChecked()
+      await user.click(consent)
+      await user.click(within(dialog).getByRole('button', { name: 'Finish and save' }))
+      expect(mock.finish).toHaveBeenCalledWith(
+        expect.objectContaining({ id: session.id }),
+        'completed',
+        { countForSplit: true },
+      )
+    },
+  )
+
+  it('never offers to include an abandoned scheduled workout', async () => {
+    const session = active(['weight-reps', 'reps'])
+    scheduleSession(session)
+    const user = userEvent.setup()
+    render(app(`/train/${session.id}`))
+    await user.click(screen.getByRole('button', { name: 'End early' }))
+    expect(within(screen.getByRole('dialog')).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('without advancing your split')
+    await user.click(screen.getByRole('button', { name: 'End early and keep work' }))
+    expect(mock.finish).toHaveBeenCalledWith(
+      expect.objectContaining({ id: session.id }),
+      'abandoned',
+    )
+  })
+
+  it.each(['revision', 'active-split', 'sequence', 'slot'])(
+    'explains that a completed workout will not advance after its %s changes',
+    async (change) => {
+      const session = active()
+      scheduleSession(session)
+      const user = userEvent.setup()
+      render(app(`/train/${session.id}`))
+      actual('Weight (kg)', '40')
+      actual('Reps', '8')
+      await user.click(screen.getByRole('checkbox'))
+      if (change === 'revision') mock.splits[0].revision += 1
+      if (change === 'active-split') mock.activeSplitId = null
+      if (change === 'slot') mock.splits[0].slots[0].routineId = 'routine-lower'
+      if (change === 'sequence')
+        mock.rollingProgress['split-test'] = {
+          splitRevision: 1,
+          sequence: 1,
+          lastSlotId: 'upper',
+          lastSessionId: 'other-workout',
+          completedAt: Date.now(),
+        }
+      await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+      expect(screen.getByRole('dialog')).toHaveTextContent('saved without advancing your split')
+      expect(screen.getByRole('dialog')).not.toHaveTextContent(
+        'counts this workout toward your split',
+      )
+      await user.click(screen.getByRole('button', { name: 'Finish and save' }))
+      expect(mock.finish).toHaveBeenCalledWith(
+        expect.objectContaining({ id: session.id }),
+        'completed',
+      )
+    },
+  )
+
   it('disables logging and starting a workout while another tab owns the writer lock', () => {
     mock.writable = false
     const view = render(app('/train'))
@@ -220,6 +559,96 @@ describe('Workout logger', () => {
       distanceMeters: 500,
     })
     await act(async () => undefined)
+  })
+
+  it('accepts pounds independently for each set and keeps account units for planned targets', async () => {
+    const session = active(['weight-reps', 'assisted-reps'])
+    session.exercises[0].plannedSets[0].targetWeightKg = 50
+    const user = userEvent.setup()
+    render(app(`/train/${session.id}`))
+    const unit = screen.getByRole('combobox', {
+      name: `Weight unit for set 1 of ${session.exercises[0].snapshot.name}`,
+    })
+    await user.selectOptions(unit, 'lb')
+    actual('Weight (lb)', '100.125')
+    expect(screen.getByLabelText('Weight (lb)')).toHaveValue(100.125)
+    expect(screen.getByText('≈ 45.4159 kg · saved automatically')).toBeInTheDocument()
+    expect(latestSaved().exercises[0].sets[0]).toMatchObject({
+      weightKg: 45.4159,
+      inputWeightUnit: 'lb',
+    })
+    expect(screen.getByLabelText('Assistance (kg)')).toHaveValue(null)
+    expect(latestSaved().exercises[1].sets[0].weightKg).toBeNull()
+    expect(screen.getByText(/Planned: 50 kg/)).toBeInTheDocument()
+    expect(mock.unit).toBe('kg')
+  })
+
+  it('converts displayed units without changing canonical weight through repeated toggles', async () => {
+    const session = active()
+    const user = userEvent.setup()
+    render(app(`/train/${session.id}`))
+    const unitLabel = `Weight unit for set 1 of ${session.exercises[0].snapshot.name}`
+    const selectUnit = (value: 'kg' | 'lb') =>
+      user.selectOptions(screen.getByRole('combobox', { name: unitLabel }), value)
+    actual('Weight (kg)', '53.1234')
+    for (let index = 0; index < 3; index += 1) {
+      await selectUnit('lb')
+      expect(screen.getByLabelText('Weight (lb)')).toHaveValue(117.12)
+      expect(latestSaved().exercises[0].sets[0].weightKg).toBe(53.1234)
+      await selectUnit('kg')
+      expect(screen.getByLabelText('Weight (kg)')).toHaveValue(53.1234)
+      expect(latestSaved().exercises[0].sets[0].weightKg).toBe(53.1234)
+    }
+  })
+
+  it('restores a per-set pounds choice and canonical weight from the saved checkpoint', async () => {
+    const session = active(['assisted-reps'])
+    const user = userEvent.setup()
+    const view = render(app(`/train/${session.id}`))
+    await user.selectOptions(screen.getByRole('combobox'), 'lb')
+    actual('Assistance (lb)', '20')
+    actual('Reps', '8')
+    mock.sessions = [latestSaved()]
+    view.unmount()
+    render(app(`/train/${session.id}`))
+    expect(screen.getByRole('combobox')).toHaveValue('lb')
+    expect(screen.getByLabelText('Assistance (lb)')).toHaveValue(20)
+    expect(screen.getByText('≈ 9.0718 kg · saved automatically')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('combobox')).toBeDisabled()
+    expect(screen.getByLabelText('Assistance (lb)')).toBeDisabled()
+    expect(latestSaved().exercises[0].sets[0]).toMatchObject({
+      weightKg: 9.0718,
+      inputWeightUnit: 'lb',
+      completedAt: expect.any(Number),
+    })
+    expect(latestSaved().timerEndAt).toBeGreaterThan(Date.now())
+  })
+
+  it('accepts zero pounds and decimal kilograms while rejecting invalid converted weight', async () => {
+    const session = active()
+    const user = userEvent.setup()
+    render(app(`/train/${session.id}`))
+    await user.selectOptions(screen.getByRole('combobox'), 'lb')
+    actual('Weight (lb)', '0')
+    actual('Reps', '8')
+    expect(screen.getByText('≈ 0 kg · saved automatically')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(latestSaved().exercises[0].sets[0].weightKg).toBe(0)
+    await user.click(screen.getByRole('checkbox'))
+    actual('Weight (lb)', '-5')
+    expect(screen.getByLabelText('Weight (lb)')).toHaveAttribute('aria-invalid', 'true')
+    await user.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    actual('Weight (lb)', '25000')
+    await user.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    await user.selectOptions(screen.getByRole('combobox'), 'kg')
+    actual('Weight (kg)', '52.125')
+    await user.click(screen.getByRole('checkbox'))
+    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(latestSaved().exercises[0].sets[0].weightKg).toBe(52.125)
   })
 
   it.each<TrackingType>(['reps', 'assisted-reps', 'duration', 'distance-duration'])(

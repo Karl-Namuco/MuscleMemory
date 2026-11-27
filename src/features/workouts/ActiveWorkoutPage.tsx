@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ArrowLeft, Check, Flag, Plus, Repeat2, Timer, Trash2, X } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { canCompleteFixed } from '../../domain/scheduling/fixed'
+import { canAdvanceRolling, isPartialWorkout } from '../../domain/scheduling/rolling'
 import {
   createPlannedSet,
   TRACKING_LABELS,
@@ -78,6 +80,7 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
   const saveSequence = useRef(0)
   const [setErrors, setSetErrors] = useState<Record<string, string>>({})
   const [finishStatus, setFinishStatus] = useState<'completed' | 'abandoned' | null>(null)
+  const [countForSplit, setCountForSplit] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const finishInFlight = useRef(false)
   const [pickerEntry, setPickerEntry] = useState<string | null>(null)
@@ -87,6 +90,28 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
   const readOnly = workouts.writable === false
   const totals = workoutTotals(session)
   const totalSets = session.exercises.reduce((sum, entry) => sum + entry.sets.length, 0)
+  const scheduled = Boolean(session.fixedContext) || session.splitContext?.sequence !== undefined
+  const partialScheduled = scheduled && isPartialWorkout(session)
+  const resolvingTraining = training.loading || Boolean(training.error) || training.hasPendingWrites
+  const activeSplit = training.splits.find((split) => split.id === training.activeSplitId) ?? null
+  const completedCandidate: WorkoutSession = {
+    ...session,
+    status: 'completed',
+    completionKey: session.id,
+    endedAt: now,
+    countsForSplit: true,
+  }
+  const canCountForSplit =
+    scheduled &&
+    (session.fixedContext
+      ? canCompleteFixed(
+          completedCandidate,
+          training.fixedSchedules?.find(
+            (schedule) => schedule.id === session.fixedContext?.scheduleId,
+          ) ?? null,
+          activeSplit,
+        )
+      : canAdvanceRolling(completedCandidate, activeSplit, workouts.rollingProgress))
   const restRemaining =
     session.timerEndAt === null ? 0 : Math.max(0, Math.ceil((session.timerEndAt - now) / 1000))
 
@@ -236,13 +261,28 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
     }
   }
 
+  function beginFinish(status: 'completed' | 'abandoned') {
+    setCountForSplit(false)
+    setFinishStatus(status)
+  }
+
   async function finish() {
     if (!finishStatus || finishInFlight.current) return
     finishInFlight.current = true
     setFinishing(true)
     setLocalError('')
     try {
-      await workouts.finishWorkout(current.current, finishStatus)
+      if (
+        finishStatus === 'completed' &&
+        (current.current.fixedContext || current.current.splitContext?.sequence !== undefined) &&
+        isPartialWorkout(current.current)
+      ) {
+        await workouts.finishWorkout(current.current, finishStatus, {
+          countForSplit: countForSplit && (canCountForSplit || resolvingTraining),
+        })
+      } else {
+        await workouts.finishWorkout(current.current, finishStatus)
+      }
       failedEditorInputs.delete(editorKey)
       navigate(`/history/${current.current.id}`)
     } catch (failure) {
@@ -312,7 +352,7 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
         </div>
         <button
           className="btn btn-primary"
-          onClick={() => setFinishStatus('completed')}
+          onClick={() => beginFinish('completed')}
           disabled={readOnly || finishing || localSaves > 0 || totals.completedSets === 0}
         >
           <Flag size={17} /> Finish workout
@@ -447,19 +487,20 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
                       <span className="workout-set-number">{setIndex + 1}</span>
                       <div className="workout-set-fields">
                         {hasWeight && (
-                          <ActualNumber
-                            label={`${tracking === 'assisted-reps' ? 'Assistance' : 'Weight'} (${weightUnit})`}
+                          <ActualWeight
+                            label={tracking === 'assisted-reps' ? 'Assistance' : 'Weight'}
                             id={`${set.id}-weight`}
-                            value={
-                              set.weightKg === null ? null : weightFromKg(set.weightKg, weightUnit)
-                            }
-                            min={0}
-                            max={weightUnit === 'kg' ? 10000 : 22046.22}
-                            step="any"
+                            unitLabel={`Weight unit for set ${setIndex + 1} of ${entry.snapshot.name}`}
+                            unit={set.inputWeightUnit ?? weightUnit}
+                            weightKg={set.weightKg}
                             disabled={done}
-                            update={(value) =>
+                            changeUnit={(unit) =>
+                              updateSet(entry.id, set.id, { inputWeightUnit: unit })
+                            }
+                            update={(value, unit) =>
                               updateSet(entry.id, set.id, {
-                                weightKg: value === null ? null : weightToKg(value, weightUnit),
+                                weightKg: value,
+                                inputWeightUnit: unit,
                               })
                             }
                           />
@@ -614,14 +655,14 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
           <button
             className="btn btn-ghost"
             disabled={readOnly || finishing || localSaves > 0}
-            onClick={() => setFinishStatus('abandoned')}
+            onClick={() => beginFinish('abandoned')}
           >
             End early
           </button>
           <button
             className="btn btn-primary"
             disabled={readOnly || finishing || localSaves > 0 || totals.completedSets === 0}
-            onClick={() => setFinishStatus('completed')}
+            onClick={() => beginFinish('completed')}
           >
             Finish workout
           </button>
@@ -655,6 +696,40 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
                 ? 'Your performed work and notes will be kept in history with an ended early label.'
                 : 'Your actual completed sets and notes will be kept in history. This workout cannot be edited after it ends.'}
             </Dialog.Description>
+            {finishStatus === 'completed' &&
+              partialScheduled &&
+              (canCountForSplit || resolvingTraining) && (
+                <div className="workout-split-choice">
+                  <p>
+                    {resolvingTraining
+                      ? 'Split progress will be checked after your training plan finishes loading or synchronizing. Choose whether to count this partial workout when it can be checked.'
+                      : 'This is a partial workout. Your split stays on this slot unless you choose to count it.'}
+                  </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={countForSplit}
+                      disabled={readOnly || finishing}
+                      onChange={(event) => setCountForSplit(event.target.checked)}
+                    />
+                    Count this workout toward my split
+                  </label>
+                </div>
+              )}
+            {scheduled &&
+              (finishStatus === 'abandoned' ||
+                !partialScheduled ||
+                (!canCountForSplit && !resolvingTraining)) && (
+                <p className="subtle-caption">
+                  {finishStatus === 'abandoned'
+                    ? 'Ending early saves your performed work without advancing your split.'
+                    : resolvingTraining
+                      ? 'Split progress will be checked after your training plan finishes loading or synchronizing.'
+                      : canCountForSplit
+                        ? 'Completing all planned work counts this workout toward your split.'
+                        : 'Your performed work will be saved without advancing your split because its active plan or next slot has changed.'}
+                </p>
+              )}
             <div className="workout-dialog-actions">
               <Dialog.Close asChild>
                 <button className="btn btn-secondary" disabled={finishing}>
@@ -766,6 +841,92 @@ function ActualNumber({
       {invalid && (
         <small id={`${id}-error`} className="workout-field-error">
           Enter {step === 1 ? 'a whole number' : 'a number'} from {min} to {max}.
+        </small>
+      )}
+    </div>
+  )
+}
+
+function ActualWeight({
+  label,
+  id,
+  unitLabel,
+  unit,
+  weightKg,
+  disabled,
+  changeUnit,
+  update,
+}: {
+  label: string
+  id: string
+  unitLabel: string
+  unit: 'kg' | 'lb'
+  weightKg: number | null
+  disabled: boolean
+  changeUnit: (unit: 'kg' | 'lb') => void
+  update: (value: number | null, unit: 'kg' | 'lb') => void
+}) {
+  // Preserve decimal input while deriving unit changes from canonical kg. A rounded
+  // display value never feeds back into saved performance just because units change.
+  const [draft, setDraft] = useState(() => ({
+    unit,
+    weightKg,
+    text: weightKg === null ? '' : String(weightFromKg(weightKg, unit)),
+  }))
+  const input =
+    draft.unit === unit && draft.weightKg === weightKg
+      ? draft.text
+      : weightKg === null
+        ? ''
+        : String(weightFromKg(weightKg, unit))
+  const invalid = weightKg !== null && (weightKg < 0 || weightKg > 10000)
+  const conversion = unit === 'lb' && weightKg !== null && !invalid
+  return (
+    <div className="field workout-weight-field">
+      <label htmlFor={id}>
+        {label} ({unit})
+      </label>
+      <div className="workout-weight-controls">
+        <input
+          id={id}
+          className="input"
+          type="number"
+          inputMode="decimal"
+          value={input}
+          min={0}
+          step="any"
+          disabled={disabled}
+          aria-invalid={invalid}
+          aria-describedby={invalid ? `${id}-error` : conversion ? `${id}-conversion` : undefined}
+          placeholder="—"
+          onChange={(event) => {
+            const value =
+              event.target.value === '' || !Number.isFinite(event.target.valueAsNumber)
+                ? null
+                : weightToKg(event.target.valueAsNumber, unit)
+            setDraft({ unit, weightKg: value, text: event.target.value })
+            update(value, unit)
+          }}
+        />
+        <select
+          className="input"
+          aria-label={unitLabel}
+          value={unit}
+          disabled={disabled}
+          onChange={(event) => changeUnit(event.target.value as 'kg' | 'lb')}
+        >
+          <option value="kg">kg</option>
+          <option value="lb">lb</option>
+        </select>
+      </div>
+      {conversion && (
+        <small id={`${id}-conversion`} className="workout-weight-conversion">
+          ≈ {weightKg} kg · saved automatically
+        </small>
+      )}
+      {invalid && (
+        <small id={`${id}-error`} className="workout-field-error">
+          Enter a weight equivalent to 0–10,000 kg.
         </small>
       )}
     </div>

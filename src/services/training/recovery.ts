@@ -1,5 +1,5 @@
 export interface TrainingRecovery {
-  collection: 'customExercises' | 'routines' | 'splits' | 'trainingSettings'
+  collection: 'customExercises' | 'routines' | 'splits' | 'trainingSettings' | 'fixedSchedules'
   id: string
   mutationId: string
   payload: Record<string, unknown>
@@ -17,7 +17,9 @@ export function readTrainingRecovery(uid: string): TrainingRecovery[] {
         typeof item === 'object' &&
         typeof item.id === 'string' &&
         typeof item.mutationId === 'string' &&
-        ['customExercises', 'routines', 'splits', 'trainingSettings'].includes(item.collection) &&
+        ['customExercises', 'routines', 'splits', 'trainingSettings', 'fixedSchedules'].includes(
+          item.collection,
+        ) &&
         item.payload &&
         typeof item.payload === 'object',
     )

@@ -17,6 +17,22 @@ import {
 } from '../../domain/workout/helpers'
 import { workoutValidationPages } from '../../domain/workout/validationPages'
 import { workoutSessionSchema } from '../../schemas/workout'
+import {
+  canCompleteFixed,
+  completeFixedOccurrence,
+  getFixedRecommendation,
+  localDate,
+} from '../../domain/scheduling/fixed'
+import { fixedScheduleValidationPages } from '../../domain/scheduling/fixedValidationPages'
+import { fixedScheduleSchema } from '../../schemas/fixedScheduling'
+import type { FixedSchedule } from '../../types/fixedScheduling'
+import {
+  advanceRollingProgress,
+  canAdvanceRolling,
+  getRollingRecommendation,
+  isPartialWorkout,
+} from '../../domain/scheduling/rolling'
+import type { RollingProgress } from '../../types/scheduling'
 import type { Routine } from '../../types/training'
 import type { WorkoutSession } from '../../types/workout'
 import { useAuth } from '../auth/AuthProvider'
@@ -36,6 +52,7 @@ import {
 } from './storage'
 
 export interface WorkoutData {
+  rollingProgress: RollingProgress
   sessions: WorkoutSession[]
   activeSession: WorkoutSession | null
   loading: boolean
@@ -47,9 +64,16 @@ export interface WorkoutData {
   writable: boolean
   rejectedSessions: WorkoutSession[]
   unreadableCount: number
-  startWorkout: (routine: Routine) => Promise<string>
+  startWorkout: (
+    routine: Routine,
+    options?: { scheduled?: boolean; allowEarly?: boolean; fixedOccurrenceId?: string },
+  ) => Promise<string>
   saveWorkout: (session: WorkoutSession) => Promise<void>
-  finishWorkout: (session: WorkoutSession, status: 'completed' | 'abandoned') => Promise<void>
+  finishWorkout: (
+    session: WorkoutSession,
+    status: 'completed' | 'abandoned',
+    options?: { countForSplit?: boolean },
+  ) => Promise<void>
   retrySync: () => void
   downloadRecovery: () => void
   discardLocalChanges: (sessionId: string) => Promise<void>
@@ -66,10 +90,21 @@ const failureMessage = (failure: unknown) =>
 
 /** IndexedDB is the durable editor checkpoint; Firestore owns the cloud write queue. */
 export function WorkoutProvider({ children }: { children: ReactNode }) {
-  const { user, status } = useAuth()
+  const { user, status, account } = useAuth()
   const training = useTraining()
+  const trainingLatest = useRef(training)
+  trainingLatest.current = training
+  const confirmedCalendars = useRef(new Map<string, FixedSchedule>())
+  function currentCalendar(id: string): FixedSchedule | null {
+    const observed = trainingLatest.current.fixedSchedules?.find((item) => item.id === id)
+    const confirmed = confirmedCalendars.current.get(id)
+    return confirmed && (!observed || confirmed.revision > observed.revision)
+      ? confirmed
+      : (observed ?? null)
+  }
   const uid = status === 'ready' ? user?.uid : undefined
   const [sessions, setSessions] = useState<WorkoutSession[]>([])
+  const [rollingProgress, setRollingProgress] = useState<RollingProgress>({})
   const [activeSession, setActiveSession] = useState<WorkoutSession | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -113,6 +148,15 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       (left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id),
     )
     setSessions(values)
+    let progress = state.current?.rollingProgress ?? {}
+    for (const checkpoint of checkpoints.current.values()) {
+      const split =
+        trainingLatest.current.splits.find(
+          (item) => item.id === checkpoint.session.splitContext?.splitId,
+        ) ?? null
+      progress = advanceRollingProgress(checkpoint.session, split, progress)
+    }
+    setRollingProgress(progress)
     const localActive = [...checkpoints.current.values()].find(
       (item) => item.session.status === 'active',
     )?.session
@@ -235,6 +279,11 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     }
     if (attempt.state && (!state.current || state.current.revision <= attempt.state.revision))
       state.current = attempt.state
+    if (attempt.fixedSchedule) {
+      const prior = confirmedCalendars.current.get(attempt.fixedSchedule.id)
+      if (!prior || prior.revision < attempt.fixedSchedule.revision)
+        confirmedCalendars.current.set(attempt.fixedSchedule.id, attempt.fixedSchedule)
+    }
     if (!dirty && attempt.session.status !== 'active') {
       await deleteWorkoutCheckpoint(row.uid, id)
       if (generation.current !== token || owner.current !== row.uid) return
@@ -314,6 +363,8 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     storageError.current = null
     quarantined.current = []
     setSessions([])
+    confirmedCalendars.current.clear()
+    setRollingProgress({})
     setActiveSession(null)
     setLoading(Boolean(uid))
     setError(null)
@@ -579,6 +630,29 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, retry])
 
+  // Recovered completions may hydrate before their split. Retain their intent
+  // until the plan is ready, including any rejected or pending training edits.
+  useEffect(() => {
+    if (
+      !uid ||
+      owner.current !== uid ||
+      training.loading ||
+      training.error ||
+      training.hasPendingWrites
+    )
+      return
+    for (const row of checkpoints.current.values())
+      if (row.dirty && !row.attempt && !row.error && !row.conflict) schedule(row.session.id, true)
+  }, [
+    uid,
+    training.loading,
+    training.error,
+    training.hasPendingWrites,
+    training.activeSplitId,
+    training.splits,
+    training.fixedSchedules,
+  ])
+
   function nextState(previous: WorkoutState | null, activeSessionId: string | null): WorkoutState {
     const now = Math.max(Date.now(), (previous?.updatedAt ?? 0) + 1)
     return {
@@ -591,6 +665,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       mutationId: crypto.randomUUID(),
       previousMutationId: previous?.mutationId ?? null,
       activeSessionId,
+      ...(previous?.rollingProgress ? { rollingProgress: previous.rollingProgress } : {}),
     }
   }
   function sync(id: string) {
@@ -605,6 +680,14 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         row.error ||
         row.conflict ||
         inFlight.current.has(id)
+      )
+        return
+      if (
+        row.session.status === 'completed' &&
+        row.session.countsForSplit &&
+        (trainingLatest.current.loading ||
+          trainingLatest.current.error ||
+          trainingLatest.current.hasPendingWrites)
       )
         return
       if (row.baseRevision > 0 && state.current?.activeSessionId !== id) {
@@ -624,11 +707,12 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
               status: 'active' as const,
               endedAt: null,
               completionKey: null,
+              countsForSplit: false,
               timerEndAt: null,
             }
           : row.session
       const now = Math.max(Date.now(), source.updatedAt + 1, source.endedAt ?? 0)
-      const value = workoutSessionSchema.parse({
+      let value = workoutSessionSchema.parse({
         ...source,
         revision: row.baseRevision + 1,
         mutationId: crypto.randomUUID(),
@@ -642,7 +726,50 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         : value.status !== 'active'
           ? nextState(row.stateBase ?? state.current, null)
           : null
-      const attempt: WorkoutAttempt = { session: value, state: changedState, version: row.version }
+      let changedCalendar: FixedSchedule | undefined
+      if (
+        changedState &&
+        value.status === 'completed' &&
+        value.countsForSplit &&
+        value.fixedContext
+      ) {
+        const split =
+          trainingLatest.current.splits.find(
+            (item) =>
+              item.id === trainingLatest.current.activeSplitId &&
+              item.id === value.splitContext?.splitId,
+          ) ?? null
+        const calendar = currentCalendar(value.fixedContext.scheduleId)
+        if (calendar && canCompleteFixed(value, calendar, split)) {
+          changedCalendar = fixedScheduleSchema.parse({
+            ...completeFixedOccurrence(calendar, value, split),
+            revision: calendar.revision + 1,
+            mutationId: crypto.randomUUID(),
+            previousMutationId: calendar.mutationId,
+            updatedAt: Math.max(Date.now(), calendar.updatedAt + 1, value.endedAt ?? 0),
+          }) as FixedSchedule
+        } else value = { ...value, countsForSplit: false }
+      } else if (changedState && value.status === 'completed' && value.countsForSplit) {
+        const split =
+          trainingLatest.current.splits.find(
+            (item) =>
+              item.id === trainingLatest.current.activeSplitId &&
+              item.id === value.splitContext?.splitId,
+          ) ?? null
+        const progress = changedState.rollingProgress ?? {}
+        if (canAdvanceRolling(value, split, progress)) {
+          changedState.rollingProgress = advanceRollingProgress(value, split, progress)
+        } else {
+          // A split edit or activation change must not prevent preserving performed work.
+          value = { ...value, countsForSplit: false }
+        }
+      }
+      const attempt: WorkoutAttempt = {
+        session: value,
+        state: changedState,
+        version: row.version,
+        ...(changedCalendar ? { fixedSchedule: changedCalendar } : {}),
+      }
       await persist({ ...row, attempt })
       inFlight.current.set(id, value.mutationId)
       const db = getFirebaseServices().db
@@ -654,6 +781,14 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
           page.value,
         )
       if (changedState) batch.set(doc(db, 'users', uid, 'workoutState', 'current'), changedState)
+      if (changedCalendar) {
+        batch.set(doc(db, 'users', uid, 'fixedSchedules', changedCalendar.id), changedCalendar)
+        for (const page of fixedScheduleValidationPages(changedCalendar))
+          batch.set(
+            doc(db, 'users', uid, 'fixedSchedules', changedCalendar.id, 'validationPages', page.id),
+            page.value,
+          )
+      }
       void batch
         .commit()
         .then(() => {
@@ -697,7 +832,10 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
   }
   syncRef.current = sync
 
-  async function startWorkout(routine: Routine) {
+  async function startWorkout(
+    routine: Routine,
+    options?: { scheduled?: boolean; allowEarly?: boolean; fixedOccurrenceId?: string },
+  ) {
     const ownerId = requireOwner()
     return enqueue(async () => {
       if (
@@ -717,13 +855,78 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         throw new Error(
           'This routine changed. Reopen Train and review the latest routine before starting.',
         )
-      const split = training.splits.find(
-        (item) => item.id === training.activeSplitId && !item.archived,
-      )
-      const slot = split?.slots.find((item) => !item.isRestDay && item.routineId === routine.id)
-      const context =
-        split && slot ? { splitId: split.id, splitRevision: split.revision, slotId: slot.id } : null
-      const value = createWorkoutSession(currentRoutine, ownerId, context)
+      let context: WorkoutSession['splitContext'] = null
+      let fixedContext: WorkoutSession['fixedContext']
+      if (options?.scheduled) {
+        if (training.loading || training.error || training.hasPendingWrites)
+          throw new Error(
+            'Wait for your training plan to finish synchronizing before starting its next workout.',
+          )
+        const split = training.splits.find((item) => item.id === training.activeSplitId) ?? null
+        if (split?.mode === 'fixed') {
+          const calendar = currentCalendar(split.id)
+          const recommendation = getFixedRecommendation(
+            calendar,
+            split,
+            training.routines,
+            Date.now(),
+          )
+          const occurrence = options.fixedOccurrenceId
+            ? calendar?.occurrences.find((item) => item.id === options.fixedOccurrenceId)
+            : recommendation.kind === 'workout'
+              ? recommendation.occurrence
+              : undefined
+          if (
+            !calendar ||
+            calendar.splitRevision !== split.revision ||
+            !occurrence ||
+            occurrence.status !== 'planned' ||
+            occurrence.isRestDay ||
+            occurrence.routineId !== routine.id ||
+            occurrence.scheduledDate > localDate(Date.now(), calendar.timeZone)
+          )
+            throw new Error(
+              'This calendar workout is unavailable or scheduled for a future date. Review your calendar first.',
+            )
+          context = {
+            splitId: split.id,
+            splitRevision: split.revision,
+            slotId: occurrence.slotId,
+            sequence: occurrence.sequence,
+          }
+          fixedContext = {
+            scheduleId: calendar.id,
+            generationId: calendar.generationId,
+            occurrenceId: occurrence.id,
+            occurrenceVersion: occurrence.version,
+          }
+        } else {
+          const recommendation = getRollingRecommendation(
+            split,
+            training.routines,
+            state.current?.rollingProgress ?? {},
+            Date.now(),
+            account?.preferences.timeZone ?? 'UTC',
+          )
+          if (
+            (recommendation.kind !== 'workout' && recommendation.kind !== 'rest') ||
+            recommendation.routine.id !== routine.id
+          )
+            throw new Error('Your next workout changed. Review your training plan and try again.')
+          if (recommendation.kind === 'rest' && !options.allowEarly)
+            throw new Error('Rest is next in your split. Confirm training early before starting.')
+          context = {
+            splitId: recommendation.splitId,
+            splitRevision: recommendation.splitRevision,
+            slotId: recommendation.slotId,
+            sequence: recommendation.sequence,
+          }
+        }
+      }
+      const value = workoutSessionSchema.parse({
+        ...createWorkoutSession(currentRoutine, ownerId, context),
+        ...(fixedContext ? { fixedContext } : {}),
+      }) as WorkoutSession
       await persist({
         key: `${ownerId}:${value.id}`,
         uid: ownerId,
@@ -751,17 +954,21 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       if (!existing && input.revision !== authoritative.revision)
         throw new Error('This workout changed. Reopen its latest cloud version before editing.')
       const now = Math.max(Date.now(), authoritative.updatedAt)
+      const editable = { ...input }
+      delete editable.fixedContext
       const value = workoutSessionSchema.parse({
-        ...input,
+        ...editable,
         id: authoritative.id,
         ownerId,
         status: 'active',
         endedAt: null,
         completionKey: null,
+        countsForSplit: false,
         routineId: authoritative.routineId,
         routineRevision: authoritative.routineRevision,
         routineName: authoritative.routineName,
         splitContext: authoritative.splitContext,
+        ...(authoritative.fixedContext ? { fixedContext: authoritative.fixedContext } : {}),
         startedAt: authoritative.startedAt,
         createdAt: authoritative.createdAt,
         schemaVersion: 1,
@@ -788,7 +995,11 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       schedule(input.id)
     })
   }
-  async function finishWorkout(input: WorkoutSession, finalStatus: 'completed' | 'abandoned') {
+  async function finishWorkout(
+    input: WorkoutSession,
+    finalStatus: 'completed' | 'abandoned',
+    options?: { countForSplit?: boolean },
+  ) {
     const ownerId = requireOwner()
     await enqueue(async () => {
       const row = checkpoints.current.get(input.id)
@@ -803,14 +1014,17 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         throw new Error(
           'This workout changed on another device. Review the latest version before finishing.',
         )
+      const editable = { ...input }
+      delete editable.fixedContext
       const source = {
-        ...input,
+        ...editable,
         id: current.id,
         ownerId,
         routineId: current.routineId,
         routineRevision: current.routineRevision,
         routineName: current.routineName,
         splitContext: current.splitContext,
+        ...(current.fixedContext ? { fixedContext: current.fixedContext } : {}),
         startedAt: current.startedAt,
         createdAt: current.createdAt,
         schemaVersion: 1 as const,
@@ -824,6 +1038,20 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         finalStatus,
         Math.max(Date.now(), source.updatedAt),
       )
+      const split =
+        training.splits.find(
+          (item) => item.id === training.activeSplitId && item.id === value.splitContext?.splitId,
+        ) ?? null
+      const requestedCount = options?.countForSplit ?? !isPartialWorkout(value)
+      const candidate = { ...value, countsForSplit: finalStatus === 'completed' && requestedCount }
+      const waitingForPlan = training.loading || training.error || training.hasPendingWrites
+      value.countsForSplit =
+        candidate.countsForSplit &&
+        value.splitContext?.sequence !== undefined &&
+        (Boolean(waitingForPlan) ||
+          (candidate.fixedContext
+            ? canCompleteFixed(candidate, currentCalendar(candidate.fixedContext.scheduleId), split)
+            : canAdvanceRolling(candidate, split, state.current?.rollingProgress ?? {})))
       const checkpoint: WorkoutCheckpoint = row ?? {
         key: `${ownerId}:${input.id}`,
         uid: ownerId,
@@ -952,6 +1180,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
   return (
     <WorkoutContext.Provider
       value={{
+        rollingProgress,
         sessions,
         activeSession,
         loading,

@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EXERCISES } from '../src/data/exercises'
 import { createRoutineExercise } from '../src/domain/training/helpers'
 import { createWorkoutSession } from '../src/domain/workout/helpers'
+import { createFixedSchedule } from '../src/domain/scheduling/fixed'
+import type { FixedSchedule } from '../src/types/fixedScheduling'
 import {
   WorkoutProvider,
   useWorkouts,
   type WorkoutData,
 } from '../src/services/workouts/WorkoutProvider'
 import type { WorkoutCheckpoint } from '../src/services/workouts/storage'
-import type { Routine } from '../src/types/training'
+import type { Routine, TrainingSplit } from '../src/types/training'
 import type { WorkoutSession } from '../src/types/workout'
 
 interface Reference {
@@ -36,6 +38,12 @@ interface PendingCommit {
 const mock = vi.hoisted(() => ({
   uid: 'owner-a',
   routines: [] as Routine[],
+  splits: [] as TrainingSplit[],
+  fixedSchedules: [] as FixedSchedule[],
+  activeSplitId: null as string | null,
+  trainingLoading: false,
+  trainingPending: false,
+  trainingError: null as string | null,
   persisted: new Map<string, WorkoutCheckpoint>(),
   remote: new Map<string, unknown>(),
   listeners: new Map<Reference, (snapshot: Snapshot) => void>(),
@@ -49,7 +57,15 @@ vi.mock('../src/services/auth/AuthProvider', () => ({
   useAuth: () => ({ user: { uid: mock.uid }, status: 'ready' }),
 }))
 vi.mock('../src/services/training/TrainingProvider', () => ({
-  useTraining: () => ({ routines: mock.routines, splits: [], activeSplitId: null }),
+  useTraining: () => ({
+    routines: mock.routines,
+    splits: mock.splits,
+    fixedSchedules: mock.fixedSchedules,
+    activeSplitId: mock.activeSplitId,
+    loading: mock.trainingLoading,
+    hasPendingWrites: mock.trainingPending,
+    error: mock.trainingError,
+  }),
 }))
 vi.mock('../src/services/firebase/client', () => ({
   getFirebaseServices: () => ({ db: {} }),
@@ -214,6 +230,12 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-11-25T10:00:00Z'))
   mock.uid = 'owner-a'
   mock.routines = [routine()]
+  mock.splits = []
+  mock.fixedSchedules = []
+  mock.activeSplitId = null
+  mock.trainingLoading = false
+  mock.trainingPending = false
+  mock.trainingError = null
   mock.persisted.clear()
   mock.remote.clear()
   mock.listeners.clear()
@@ -245,6 +267,309 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+})
+
+function enableRolling() {
+  mock.activeSplitId = 'rolling-split'
+  mock.splits = [
+    {
+      ...routine(),
+      id: mock.activeSplitId,
+      name: 'Rolling strength',
+      mode: 'rolling',
+      slots: [
+        { id: 'first-slot', label: 'Strength A', routineId: mock.routines[0].id, isRestDay: false },
+        {
+          id: 'second-slot',
+          label: 'Strength B',
+          routineId: mock.routines[0].id,
+          isRestDay: false,
+        },
+      ],
+    },
+  ]
+}
+
+function performed(all = true) {
+  const session = structuredClone(api().activeSession!)
+  session.exercises = session.exercises.map((entry) => ({
+    ...entry,
+    sets: entry.sets.map((set, index) => ({
+      ...set,
+      weightKg: 30,
+      reps: 8,
+      completedAt: all || index === 0 ? Date.now() : null,
+    })),
+  }))
+  return session
+}
+
+function enableFixed() {
+  const timestamp=Date.now()-1000
+  const split:TrainingSplit={id:'fixed-split',ownerId:mock.uid,createdAt:timestamp,updatedAt:timestamp,archived:false,schemaVersion:1,revision:1,mutationId:'fixed-split-mutation',previousMutationId:null,name:'Fixed strength',description:'',mode:'fixed',slots:[{id:'fixed-slot',label:'Strength',routineId:mock.routines[0].id,isRestDay:false}]}
+  mock.splits=[split];mock.activeSplitId=split.id
+  const calendar=createFixedSchedule({split,routines:mock.routines,startDate:'2026-11-25',timeZone:'UTC',preferredDays:[],generationId:'fixed-calendar',now:Date.now()})
+  mock.fixedSchedules=[calendar]
+  mock.remote.set(`users/${mock.uid}/fixedSchedules/${calendar.id}`,calendar)
+  return calendar
+}
+
+describe('Fixed workout coordination',()=>{
+  it('completes the frozen occurrence atomically with history and checkpoints its calendar attempt',async()=>{
+    const calendar=enableFixed()
+    render(tree());await settle()
+    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
+    expect(api().activeSession?.fixedContext).toMatchObject({generationId:calendar.generationId,occurrenceId:calendar.occurrences[0].id,occurrenceVersion:1})
+    await advance();await confirm(0)
+    const session=performed()
+    await act(async()=>{await api().finishWorkout(session,'completed')});await advance()
+    const changed=mock.commits[1].writes.find(write=>write.path.endsWith(`/fixedSchedules/${calendar.id}`))!.value as FixedSchedule
+    expect(changed.occurrences[0]).toMatchObject({status:'completed',completionSessionId:session.id,version:2})
+    expect(changed.occurrences.slice(1)).toEqual(calendar.occurrences.slice(1))
+    expect([...mock.persisted.values()][0].attempt?.fixedSchedule).toEqual(changed)
+    expect(mock.commits[1].writes.some(write=>write.path.endsWith('/validationPages/p3'))).toBe(true)
+    await act(async()=>{await api().finishWorkout(session,'completed')});await advance()
+    expect(mock.commits).toHaveLength(2)
+    await confirm(1)
+    expect(mock.persisted.size).toBe(0)
+    await expect(api().startWorkout(mock.routines[0],{scheduled:true,fixedOccurrenceId:calendar.occurrences[0].id})).rejects.toThrow('unavailable')
+  })
+  it('keeps one identity when a scheduled workout finishes offline before its first acknowledgment',async()=>{
+    const calendar=enableFixed();mock.offline=true
+    render(tree());await settle()
+    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
+    await act(async()=>{await api().finishWorkout(performed(),'completed')});await advance()
+    expect(sessionWrite(0).countsForSplit).toBe(false)
+    expect(mock.commits[0].writes.some(write=>write.path.includes('/fixedSchedules/'))).toBe(false)
+    await confirm(0);await advance(1500)
+    expect(sessionWrite(1).countsForSplit).toBe(true)
+    await confirm(1)
+    expect((mock.remote.get(`users/${mock.uid}/fixedSchedules/${calendar.id}`) as FixedSchedule).occurrences[0].status).toBe('completed')
+    expect(api().sessions).toHaveLength(1)
+  })
+  it.each([false,true])('respects explicit partial inclusion: %s',async(countForSplit)=>{
+    enableFixed();render(tree());await settle()
+    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
+    await advance();await confirm(0)
+    await act(async()=>{await api().finishWorkout(performed(false),'completed',{countForSplit})});await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(countForSplit)
+    expect(mock.commits[1].writes.some(write=>/\/fixedSchedules\/[^/]+$/.test(write.path))).toBe(countForSplit)
+  })
+  it('keeps history without completing a regenerated occurrence and rejects future starts',async()=>{
+    const calendar=enableFixed();const view=render(tree());await settle()
+    await expect(api().startWorkout(mock.routines[0],{scheduled:true,fixedOccurrenceId:calendar.occurrences[1].id})).rejects.toThrow('future')
+    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})});await advance();await confirm(0)
+    mock.fixedSchedules=[createFixedSchedule({split:mock.splits[0],routines:mock.routines,startDate:'2026-11-25',timeZone:'UTC',preferredDays:[],generationId:'regenerated-calendar',now:Date.now()+1,previous:calendar})]
+    view.rerender(tree());await settle()
+    await act(async()=>{await api().finishWorkout(performed(),'completed')});await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(false)
+    expect(mock.commits[1].writes.some(write=>write.path.includes('/fixedSchedules/'))).toBe(false)
+  })
+})
+
+describe('Rolling workout coordination', () => {
+  it.each(['loading', 'pending', 'error'] as const)(
+    'retains inclusion intent while the training plan is %s',
+    async (condition) => {
+      enableRolling()
+      const view = render(tree())
+      await settle()
+      await act(async () => {
+        await api().startWorkout(mock.routines[0], { scheduled: true })
+      })
+      await advance()
+      await confirm(0)
+      mock.trainingLoading = condition === 'loading'
+      mock.trainingPending = condition === 'pending'
+      mock.trainingError = condition === 'error' ? 'Training data unavailable' : null
+      view.rerender(tree())
+      await settle()
+      await act(async () => {
+        await api().finishWorkout(performed(), 'completed')
+      })
+      await advance(2000)
+      expect(api().sessions[0].countsForSplit).toBe(true)
+      expect(mock.commits).toHaveLength(1)
+      mock.trainingLoading = false
+      mock.trainingPending = false
+      mock.trainingError = null
+      view.rerender(tree())
+      await settle()
+      await advance()
+      expect(mock.commits).toHaveLength(2)
+      expect(sessionWrite(1).countsForSplit).toBe(true)
+      await confirm(1)
+      expect(api().rollingProgress['rolling-split'].sequence).toBe(1)
+    },
+  )
+
+  it('waits for the split when recovering a terminal checkpoint before training hydration', async () => {
+    enableRolling()
+    const view = render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await advance()
+    await confirm(0)
+    await act(async () => {
+      await api().finishWorkout(performed(), 'completed')
+    })
+    view.unmount()
+    await settle()
+    const savedSplits = mock.splits
+    mock.trainingLoading = true
+    mock.splits = []
+    const recovered = render(tree())
+    await settle()
+    await advance(2000)
+    expect(mock.commits).toHaveLength(1)
+    expect(api().sessions[0].countsForSplit).toBe(true)
+    expect(api().hasPendingWrites).toBe(true)
+    mock.trainingLoading = false
+    mock.splits = savedSplits
+    recovered.rerender(tree())
+    await settle()
+    await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(true)
+    await confirm(1)
+    expect(api().rollingProgress['rolling-split'].sequence).toBe(1)
+  })
+
+  it('advances the exact repeated-routine slot atomically and ignores duplicate completion', async () => {
+    enableRolling()
+    render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    expect(api().activeSession?.splitContext).toMatchObject({ slotId: 'first-slot', sequence: 0 })
+    await advance()
+    await confirm(0)
+    const session = performed()
+    await act(async () => {
+      await api().finishWorkout(session, 'completed')
+    })
+    await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(true)
+    const pointer = mock.commits[1].writes.find((item) =>
+      item.path.endsWith('/workoutState/current'),
+    )!
+    expect(pointer.value).toMatchObject({
+      activeSessionId: null,
+      rollingProgress: {
+        'rolling-split': { sequence: 1, lastSlotId: 'first-slot', lastSessionId: session.id },
+      },
+    })
+    await act(async () => {
+      await api().finishWorkout(session, 'completed')
+    })
+    await advance()
+    expect(mock.commits).toHaveLength(2)
+    await confirm(1)
+    expect(api().rollingProgress['rolling-split'].sequence).toBe(1)
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    expect(api().activeSession?.splitContext).toMatchObject({ slotId: 'second-slot', sequence: 1 })
+  })
+
+  it('checkpoints an offline completion before its active write and advances only on the terminal batch', async () => {
+    enableRolling()
+    mock.offline = true
+    render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    const session = performed()
+    await act(async () => {
+      await api().finishWorkout(session, 'completed')
+    })
+    expect(api().rollingProgress['rolling-split'].sequence).toBe(1)
+    await advance()
+    expect(sessionWrite(0).status).toBe('active')
+    expect(sessionWrite(0).countsForSplit).toBe(false)
+    await confirm(0)
+    await advance(1500)
+    expect(sessionWrite(1).countsForSplit).toBe(true)
+    expect(sessionWrite(1).id).toBe(session.id)
+    await confirm(1)
+    expect(api().rollingProgress['rolling-split'].sequence).toBe(1)
+    expect(mock.persisted.size).toBe(0)
+  })
+
+  it.each([undefined, false, true])(
+    'counts a partial workout only with explicit consent: %s',
+    async (choice) => {
+      enableRolling()
+      render(tree())
+      await settle()
+      await act(async () => {
+        await api().startWorkout(mock.routines[0], { scheduled: true })
+      })
+      await advance()
+      await confirm(0)
+      await act(async () => {
+        await api().finishWorkout(
+          performed(false),
+          'completed',
+          choice === undefined ? undefined : { countForSplit: choice },
+        )
+      })
+      await advance()
+      expect(sessionWrite(1).countsForSplit).toBe(choice === true)
+      await confirm(1)
+      expect(api().rollingProgress['rolling-split']?.sequence ?? 0).toBe(choice === true ? 1 : 0)
+    },
+  )
+
+  it('saves performed work without advancement after a split edit', async () => {
+    enableRolling()
+    const view = render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await advance()
+    await confirm(0)
+    mock.splits = mock.splits.map((split) => ({ ...split, revision: 2 }))
+    view.rerender(tree())
+    await settle()
+    await act(async () => {
+      await api().finishWorkout(performed(), 'completed')
+    })
+    await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(false)
+    await confirm(1)
+    expect(api().rollingProgress).toEqual({})
+  })
+
+  it('keeps library starts and ended-early workouts outside the split sequence', async () => {
+    enableRolling()
+    render(tree())
+    await settle()
+    await start()
+    expect(api().activeSession?.splitContext).toBeNull()
+    await advance()
+    await confirm(0)
+    await act(async () => {
+      await api().finishWorkout(performed(), 'completed', { countForSplit: true })
+    })
+    await advance()
+    expect(sessionWrite(1).countsForSplit).toBe(false)
+    await confirm(1)
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await advance()
+    await confirm(2)
+    await act(async () => {
+      await api().finishWorkout(performed(), 'abandoned', { countForSplit: true })
+    })
+    await advance()
+    expect(sessionWrite(3).countsForSplit).toBe(false)
+  })
 })
 
 describe('durable workout coordinator', () => {

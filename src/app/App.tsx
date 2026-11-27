@@ -15,6 +15,7 @@ const TodayPage = lazy(() => import('../features/dashboard/TodayPage'))
 const OnboardingPage = lazy(() => import('../features/onboarding/OnboardingPage'))
 const ProfilePage = lazy(() => import('../features/profile/ProfilePage'))
 const PlanPage = lazy(() => import('../features/plan/PlanPage'))
+const FixedCalendarPage = lazy(() => import('../features/plan/FixedCalendarPage'))
 const SplitsPage = lazy(() => import('../features/splits/SplitsPage'))
 const RoutineListPage = lazy(() => import('../features/routines/RoutineListPage'))
 const RoutineEditorPage = lazy(() => import('../features/routines/RoutineEditorPage'))
@@ -125,6 +126,7 @@ export default function App() {
                   <Route index element={<Navigate to="/today" replace />} />
                   <Route path="/today" element={<TodayPage />} />
                   <Route path="/plan" element={<PlanPage />} />
+                  <Route path="/plan/calendar" element={<FixedCalendarPage />} />
                   <Route path="/plan/splits" element={<SplitsPage />} />
                   <Route path="/plan/routines" element={<RoutineListPage />} />
                   <Route path="/plan/routines/new" element={<RoutineEditorPage />} />

@@ -7,6 +7,7 @@ export default function PlanNavigation() {
       </NavLink>
       <NavLink to="/plan/routines">Routines</NavLink>
       <NavLink to="/plan/splits">Splits</NavLink>
+      <NavLink to="/plan/calendar">Calendar</NavLink>
       <NavLink to="/exercises">Exercises</NavLink>
     </nav>
   )
