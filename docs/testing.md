@@ -2,9 +2,28 @@
 
 Test files and commands describe repeatable checks. A passing result must be observed from execution; this document does not certify that every check has passed on a particular machine or commit.
 
+## Fixed calendar and exercise/weight entry verification on 2026-11-28
+
+This increment adds a 28-day Fixed calendar, inline custom exercise creation during routine building, 30 additional built-in movements (69 total), and per-set kg/lb input with canonical kilogram storage. Adaptive scheduling remains planned.
+
+Executed checks: all 230 unit/component tests across 15 files and all 63 Firestore emulator rules tests passed. ESLint, TypeScript checking, the production build, and formatting checks for changed code passed. PWA generation cached 57 entries.
+
+Browser verification observed all 16 runnable cases passing across the full sweep and focused reruns, with the two existing WebKit adverse-concurrency cases intentionally skipped. The full sweep initially had 14 passes and two failures: a restored-workout readiness race and a loopback WebKit Write-channel transport timeout. The readiness guard and subsequent missing-library-reference issue found during reruns were fixed with regression tests; the transport case passed unchanged in isolation. The final custom-exercise rerun passed Chromium (18.3 seconds) and WebKit (48.0 seconds) after the last reference-lookup fix. The complete 18-case sweep was not repeated after that final fix. Fixed calendar and 320 px custom-exercise/workout screenshots were inspected; overflow checks passed.
+
+- [Fixed domain tests](../tests/fixed-scheduling.test.ts) cover Gregorian/leap dates, timezone and DST boundaries, weekday/rest generation, missed occurrences, move collisions, reciprocal swaps, skip immutability, regeneration, frozen completion tokens, and bounded validation pages.
+- [Fixed UI tests](../tests/fixed-calendar.test.tsx) cover calendar creation, week navigation, missed/rest labels, move/swap/skip dialogs, frozen dialog revisions, replacement confirmation, active-workout and synchronization guards, and exact occurrence starts.
+- [Fixed rules tests](../tests/fixed-scheduling.rules.test.ts) cover approval/owner isolation, required matching pages, maximum calendars, action-specific deltas, collision protection, immutable completion, stale generation/version rejection, and the atomic calendar/session/pointer batch. Calendar proof pages contain at most five occurrences, up to six pages per full calendar, to respect Firestore expression and access limits.
+- [Workout provider tests](../tests/workout-provider.test.tsx) cover Fixed full/partial inclusion, completion before first offline acknowledgment, exact attempted calendar retention, duplicate protection, regeneration/future-start guards, and checking the current plan after queued device work.
+- [Training provider regressions](../tests/training-provider.test.tsx) verify immediate routine use after an inline creation's batch acknowledgment, retention of an acknowledged recovery record until the recent-list listener catches up, and exact custom-reference lookup when a restored routine precedes library hydration. Invalid-owner and archived references are rejected. Recovery acknowledgment also clears the obsolete waiting-for-confirmation message.
+- [Routine tests](../tests/routines.test.tsx), [exercise tests](../tests/exercises.test.tsx), and [catalogue tests](../tests/data-exercises.test.ts) cover create-and-add, draft recovery without losing routine edits, duplicate names/submissions, acknowledged creation recovery, existing movement identities, and new catalogue metadata.
+- [Workout component tests](../tests/workouts.test.tsx) cover pound and kilogram entry independently of account preferences, decimals and zero, invalid load bounds, assistance, persisted entry units, repeated unit switches without changing stored kg, Fixed partial consent, and disabling edits/finish confirmation while saved workouts are still being restored.
+- [Fixed browser flow](../tests/e2e/fixed-scheduling.spec.ts) exercises calendar creation/edits and full/partial offline completion against the emulator; [custom exercise browser flow](../tests/e2e/custom-exercise.spec.ts) exercises inline creation, routine recovery, starting the custom movement, unit switching, canonical kg persistence, and reload. Both include 320 px layout assertions.
+
+Calendar windows do not extend automatically. Replacing one is explicit and starts the new generation at the first split slot; saved workout history remains available. Local emulator and simulated WebKit checks do not certify a hosted deployment, physical iPhone behavior, or operating-system storage retention. The production build retains its existing Firestore SDK chunk-size warning.
+
 ## Initial Rolling scheduling verification on 2026-11-27
 
-The first Phase 4 increment adds Rolling recommendations and qualifying split advancement. Fixed and Adaptive scheduling remain planned.
+The first Phase 4 increment added Rolling recommendations and qualifying split advancement. Fixed and Adaptive scheduling were planned at that checkpoint; the subsequent Fixed increment is described above.
 
 Executed checks: all 161 unit/component tests across 11 files and all 43 Firestore emulator rules tests passed. TypeScript checking and the production build passed with PWA generation caching 55 entries.
 

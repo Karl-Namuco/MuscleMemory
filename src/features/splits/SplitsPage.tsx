@@ -394,8 +394,8 @@ export default function SplitsPage() {
         </div>
       </section>
       <p className="training-footnote">
-        Splits define your training sequence. Calendar scheduling and adaptive recommendations come
-        later.
+        Splits define your training sequence. Fixed splits use Calendar for dated workouts; Adaptive
+        recommendations are coming later.
       </p>
       <Dialog.Root
         open={Boolean(editor)}

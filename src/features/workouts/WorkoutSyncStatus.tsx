@@ -12,13 +12,15 @@ export default function WorkoutSyncStatus({ saving = false }: { saving?: boolean
       )}
       <div role={workouts.error ? 'alert' : 'status'}>
         {workouts.error ||
-          (saving
-            ? 'Saving on this device…'
-            : workouts.hasPendingWrites
-              ? 'Saved on this device · waiting for cloud confirmation'
-              : workouts.fromCache
-                ? 'Showing saved device data · cloud confirmation unavailable'
-                : 'Changes synced')}
+          (workouts.loading
+            ? 'Restoring your saved workout…'
+            : saving
+              ? 'Saving on this device…'
+              : workouts.hasPendingWrites
+                ? 'Saved on this device · waiting for cloud confirmation'
+                : workouts.fromCache
+                  ? 'Showing saved device data · cloud confirmation unavailable'
+                  : 'Changes synced')}
       </div>
       {workouts.error && (
         <div className="workout-sync-actions">

@@ -87,7 +87,7 @@ function WorkoutEditor({ initial }: { initial: WorkoutSession }) {
   const [replacement, setReplacement] = useState<Exercise | null>(null)
   const [removeSet, setRemoveSet] = useState<{ entryId: string; setId: string } | null>(null)
   const weightUnit = account?.preferences.weightUnit || 'kg'
-  const readOnly = workouts.writable === false
+  const readOnly = workouts.loading || workouts.writable === false
   const totals = workoutTotals(session)
   const totalSets = session.exercises.reduce((sum, entry) => sum + entry.sets.length, 0)
   const scheduled = Boolean(session.fixedContext) || session.splitContext?.sequence !== undefined
@@ -921,7 +921,7 @@ function ActualWeight({
       </div>
       {conversion && (
         <small id={`${id}-conversion`} className="workout-weight-conversion">
-          ≈ {weightKg} kg · saved automatically
+          ≈ {weightKg} kg
         </small>
       )}
       {invalid && (

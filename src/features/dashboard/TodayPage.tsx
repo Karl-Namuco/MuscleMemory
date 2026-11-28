@@ -18,7 +18,8 @@ export const modeLabels = {
 }
 export default function TodayPage() {
   const { account } = useAuth()
-  const { activeSplitId } = useTraining()
+  const { activeSplitId, splits } = useTraining()
+  const activeSplit = splits.find((split) => split.id === activeSplitId)
   if (!account) return null
   const { preferences: prefs, profile } = account
   const date = new Date()
@@ -157,11 +158,21 @@ export default function TodayPage() {
         <section className="card week-card">
           <div className="section-label-row">
             <h2 className="section-heading">A week that fits</h2>
-            <Link to="/plan" className="text-link">
-              View plan
+            <Link
+              to={activeSplit?.mode === 'fixed' ? '/plan/calendar' : '/plan'}
+              className="text-link"
+            >
+              {activeSplit?.mode === 'fixed' ? 'View calendar' : 'View plan'}
             </Link>
           </div>
-          <p className="muted">Your preferred training days. No workouts scheduled yet.</p>
+          <p className="muted">
+            Your preferred training days.{' '}
+            {activeSplit?.mode === 'fixed'
+              ? 'View your calendar for dated workouts and changes.'
+              : activeSplit
+                ? 'Rolling workouts follow your split sequence.'
+                : 'Choose a split to start training.'}
+          </p>
           <div className="week-strip">
             {days.map((day) => (
               <div

@@ -1,6 +1,6 @@
 # Firebase configuration and deployment
 
-Status: the owner reported deploying Phase 2. Phase 3 workout logging is implemented locally; the agent has not published its updated client or rules. Rebuild and deploy the compatible client and Firestore rules together before using workout logging on the hosted site.
+Status: the owner reported deploying Phase 2. Workout logging, Rolling scheduling, the initial Fixed calendar, inline custom exercises, and per-set weight-unit entry are implemented locally; the agent has not published them. Rebuild and deploy the compatible client and Firestore rules together before using these features on the hosted site. Calendar writes include bounded validation pages, and older installed clients need to refresh to understand the scheduling fields.
 
 ## Local development
 

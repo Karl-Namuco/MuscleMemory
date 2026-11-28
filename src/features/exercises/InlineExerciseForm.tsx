@@ -12,6 +12,7 @@ import {
 import {
   clearExerciseDraft,
   emptyExercise,
+  exerciseInput,
   formValues,
   inputFromForm,
   readExerciseDraft,
@@ -44,7 +45,7 @@ export function InlineExerciseForm({
     name: initialName.slice(0, 120),
     equipment: 'Other',
   })
-  const [recordId, setRecordId] = useState(() => crypto.randomUUID())
+  const [recordId, setRecordId] = useState<string>(() => crypto.randomUUID())
   const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -136,6 +137,21 @@ export function InlineExerciseForm({
     setErrors({})
     try {
       await draftQueue.current.catch(() => undefined)
+      const existing = training.customExercises.find((exercise) => exercise.id === recordId)
+      // A pending creation can already have reached the cloud before this dialog
+      // recovers. Reuse that exact record instead of attempting revision-zero creation.
+      if (existing) {
+        if (
+          existing.archived ||
+          JSON.stringify(exerciseInput(existing)) !== JSON.stringify(exerciseInput(parsed.data))
+        )
+          throw new Error(
+            'This recovered exercise has already been saved with different details. Return to the exercise list to add its saved version, or edit it in your exercise library.',
+          )
+        await clearExerciseDraft(draftKey).catch(() => undefined)
+        onAdd(existing)
+        return
+      }
       const draft = {
         key: draftKey,
         uid,

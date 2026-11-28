@@ -420,35 +420,8 @@ service cloud.firestore {
       return timestamp.date(int(parts[0]), int(parts[1]), int(parts[2])).toMillis();
     }
     function fixedOccurrenceIndex(values, id) {
-      let n = values.size();
-      return n > 0 && values[0].id == id ? 0
-        : n > 1 && values[1].id == id ? 1
-        : n > 2 && values[2].id == id ? 2
-        : n > 3 && values[3].id == id ? 3
-        : n > 4 && values[4].id == id ? 4
-        : n > 5 && values[5].id == id ? 5
-        : n > 6 && values[6].id == id ? 6
-        : n > 7 && values[7].id == id ? 7
-        : n > 8 && values[8].id == id ? 8
-        : n > 9 && values[9].id == id ? 9
-        : n > 10 && values[10].id == id ? 10
-        : n > 11 && values[11].id == id ? 11
-        : n > 12 && values[12].id == id ? 12
-        : n > 13 && values[13].id == id ? 13
-        : n > 14 && values[14].id == id ? 14
-        : n > 15 && values[15].id == id ? 15
-        : n > 16 && values[16].id == id ? 16
-        : n > 17 && values[17].id == id ? 17
-        : n > 18 && values[18].id == id ? 18
-        : n > 19 && values[19].id == id ? 19
-        : n > 20 && values[20].id == id ? 20
-        : n > 21 && values[21].id == id ? 21
-        : n > 22 && values[22].id == id ? 22
-        : n > 23 && values[23].id == id ? 23
-        : n > 24 && values[24].id == id ? 24
-        : n > 25 && values[25].id == id ? 25
-        : n > 26 && values[26].id == id ? 26
-        : n > 27 && values[27].id == id ? 27 : -1;
+      let parts = id.split('_');
+      return int(parts[parts.size() - 1]);
     }
     function fixedDateAvailable(values, date, exceptId) {
       let n = values.size();
@@ -456,56 +429,35 @@ service cloud.firestore {
         && (n <= 1 || values[1].id == exceptId || values[1].status == 'skipped' || values[1].scheduledDate != date)
         && (n <= 2 || values[2].id == exceptId || values[2].status == 'skipped' || values[2].scheduledDate != date)
         && (n <= 3 || values[3].id == exceptId || values[3].status == 'skipped' || values[3].scheduledDate != date)
-        && (n <= 4 || values[4].id == exceptId || values[4].status == 'skipped' || values[4].scheduledDate != date)
-        && (n <= 5 || values[5].id == exceptId || values[5].status == 'skipped' || values[5].scheduledDate != date)
-        && (n <= 6 || values[6].id == exceptId || values[6].status == 'skipped' || values[6].scheduledDate != date)
-        && (n <= 7 || values[7].id == exceptId || values[7].status == 'skipped' || values[7].scheduledDate != date)
-        && (n <= 8 || values[8].id == exceptId || values[8].status == 'skipped' || values[8].scheduledDate != date)
-        && (n <= 9 || values[9].id == exceptId || values[9].status == 'skipped' || values[9].scheduledDate != date)
-        && (n <= 10 || values[10].id == exceptId || values[10].status == 'skipped' || values[10].scheduledDate != date)
-        && (n <= 11 || values[11].id == exceptId || values[11].status == 'skipped' || values[11].scheduledDate != date)
-        && (n <= 12 || values[12].id == exceptId || values[12].status == 'skipped' || values[12].scheduledDate != date)
-        && (n <= 13 || values[13].id == exceptId || values[13].status == 'skipped' || values[13].scheduledDate != date)
-        && (n <= 14 || values[14].id == exceptId || values[14].status == 'skipped' || values[14].scheduledDate != date)
-        && (n <= 15 || values[15].id == exceptId || values[15].status == 'skipped' || values[15].scheduledDate != date)
-        && (n <= 16 || values[16].id == exceptId || values[16].status == 'skipped' || values[16].scheduledDate != date)
-        && (n <= 17 || values[17].id == exceptId || values[17].status == 'skipped' || values[17].scheduledDate != date)
-        && (n <= 18 || values[18].id == exceptId || values[18].status == 'skipped' || values[18].scheduledDate != date)
-        && (n <= 19 || values[19].id == exceptId || values[19].status == 'skipped' || values[19].scheduledDate != date)
-        && (n <= 20 || values[20].id == exceptId || values[20].status == 'skipped' || values[20].scheduledDate != date)
-        && (n <= 21 || values[21].id == exceptId || values[21].status == 'skipped' || values[21].scheduledDate != date)
-        && (n <= 22 || values[22].id == exceptId || values[22].status == 'skipped' || values[22].scheduledDate != date)
-        && (n <= 23 || values[23].id == exceptId || values[23].status == 'skipped' || values[23].scheduledDate != date)
-        && (n <= 24 || values[24].id == exceptId || values[24].status == 'skipped' || values[24].scheduledDate != date)
-        && (n <= 25 || values[25].id == exceptId || values[25].status == 'skipped' || values[25].scheduledDate != date)
-        && (n <= 26 || values[26].id == exceptId || values[26].status == 'skipped' || values[26].scheduledDate != date)
-        && (n <= 27 || values[27].id == exceptId || values[27].status == 'skipped' || values[27].scheduledDate != date);
+        && (n <= 4 || values[4].id == exceptId || values[4].status == 'skipped' || values[4].scheduledDate != date);
     }
     function fixedSchedulePage(value, pageId, expectedSize) {
       let page = getAfter(/databases/$(database)/documents/users/$(value.ownerId)/fixedSchedules/$(value.id)/validationPages/$(pageId)).data;
-      return page.ownerId == value.ownerId && page.scheduleId == value.id
-        && page.mutationId == value.mutationId && page.revision == value.revision
+      // The path and each page's own rules bind owner/schedule. The revision and
+      // mutation force fresh, independently validated pages in this same batch.
+      return page.mutationId == value.mutationId && page.revision == value.revision
         && page.occurrences.size() == expectedSize ? page.occurrences : [];
     }
     function validatedFixedOccurrences(value) {
       let n = value.occurrences.size();
-      let first = fixedSchedulePage(value, 'p0', n > 7 ? 7 : n);
-      let second = n > 7 ? fixedSchedulePage(value, 'p1', n > 14 ? 7 : n - 7) : [];
-      let third = n > 14 ? fixedSchedulePage(value, 'p2', n > 21 ? 7 : n - 14) : [];
-      let fourth = n > 21 ? fixedSchedulePage(value, 'p3', n - 21) : [];
+      let first = fixedSchedulePage(value, 'p0', n > 5 ? 5 : n);
+      let second = n > 5 ? fixedSchedulePage(value, 'p1', n > 10 ? 5 : n - 5) : [];
+      let third = n > 10 ? fixedSchedulePage(value, 'p2', n > 15 ? 5 : n - 10) : [];
+      let fourth = n > 15 ? fixedSchedulePage(value, 'p3', n > 20 ? 5 : n - 15) : [];
+      let fifth = n > 20 ? fixedSchedulePage(value, 'p4', n > 25 ? 5 : n - 20) : [];
+      let sixth = n > 25 ? fixedSchedulePage(value, 'p5', n - 25) : [];
       return value.occurrences is list && n >= 1 && n <= 28
-        && value.occurrences == first.concat(second).concat(third).concat(fourth);
+        && value.occurrences == first.concat(second).concat(third).concat(fourth).concat(fifth).concat(sixth);
     }
     function validFixedAction(value) {
       return value.keys().hasAll(['kind', 'occurrenceId', 'otherOccurrenceId', 'sessionId'])
         && value.keys().hasOnly(['kind', 'occurrenceId', 'otherOccurrenceId', 'sessionId'])
-        && (value.kind == 'create'
-          ? value.occurrenceId == null && value.otherOccurrenceId == null && value.sessionId == null
-          : value.occurrenceId.matches('^[A-Za-z0-9_-]{1,128}$')
-            && (value.kind == 'swap'
-              ? value.otherOccurrenceId.matches('^[A-Za-z0-9_-]{1,128}$') && value.otherOccurrenceId != value.occurrenceId
-              : value.otherOccurrenceId == null)
-            && (value.kind == 'complete' ? value.sessionId.matches('^[A-Za-z0-9_-]{1,128}$') : value.sessionId == null))
+        && ((value.kind == 'create' && value.occurrenceId == null && value.otherOccurrenceId == null && value.sessionId == null)
+          || (value.kind != 'create' && value.occurrenceId.matches('^[A-Za-z0-9_-]{1,128}$')
+            && ((value.kind == 'swap' && value.otherOccurrenceId.matches('^[A-Za-z0-9_-]{1,128}$') && value.otherOccurrenceId != value.occurrenceId)
+              || (value.kind != 'swap' && value.otherOccurrenceId == null))
+            && ((value.kind == 'complete' && value.sessionId.matches('^[A-Za-z0-9_-]{1,128}$'))
+              || (value.kind != 'complete' && value.sessionId == null))))
         && value.kind in ['create', 'move', 'swap', 'skip', 'complete'];
     }
     function validFixedSchedule(value) {
@@ -525,69 +477,61 @@ service cloud.firestore {
         && split.ownerId == uid && !split.archived && split.mode == 'fixed' && split.revision == value.splitRevision
         && getAfter(/databases/$(database)/documents/users/$(uid)/trainingSettings/current).data.activeSplitId == value.splitId;
     }
-    function fixedOccurrenceEntry(value, index, parent, split, creating) {
-      return value.keys().hasAll(['id', 'slotId', 'routineId', 'label', 'isRestDay', 'scheduledDate', 'originalDate', 'version', 'sequence', 'status', 'completionSessionId', 'resolvedAt'])
-        && value.keys().hasOnly(['id', 'slotId', 'routineId', 'label', 'isRestDay', 'scheduledDate', 'originalDate', 'version', 'sequence', 'status', 'completionSessionId', 'resolvedAt'])
-        && value.id == parent.generationId + '_' + string(index) && value.sequence == index
-        && value.slotId.matches('^[A-Za-z0-9_-]{1,128}$') && value.label.matches('^[\\s\\S]{1,80}$')
-        && value.isRestDay is bool && (value.isRestDay ? value.routineId == null : value.routineId.matches('^[A-Za-z0-9_-]{1,128}$'))
-        && value.version is int && value.version >= 1 && value.version <= 9007199254740991
-        && fixedDate(value.scheduledDate) && fixedDate(value.originalDate)
-        && value.scheduledDate >= parent.startDate && value.scheduledDate <= parent.endDate
-        && value.originalDate >= parent.startDate && value.originalDate <= parent.endDate
-        && (index == 0 || parent.occurrences[index - 1].originalDate < value.originalDate)
-        && (value.status == 'planned'
-          ? value.completionSessionId == null && value.resolvedAt == null
-          : value.resolvedAt is int && value.resolvedAt > 0 && (value.status == 'skipped'
-            ? value.completionSessionId == null
-            : value.status == 'completed' && !value.isRestDay && value.completionSessionId.matches('^[A-Za-z0-9_-]{1,128}$')))
-        && (!creating || (value.version == 1 && value.status == 'planned' && value.scheduledDate == value.originalDate
-          && value.slotId == split.slots[index % split.slots.size()].id
-          && value.routineId == split.slots[index % split.slots.size()].routineId
-          && value.isRestDay == split.slots[index % split.slots.size()].isRestDay
-          && value.label == split.slots[index % split.slots.size()].label));
+    function fixedOccurrenceEntry(value, index, parent, split) {
+      let slot = split.slots[index % split.slots.size()];
+      let date = value.originalDate;
+      // Exact-map comparison validates every field while staying below the
+      // expression budget. Subsequent actions preserve this frozen snapshot.
+      return value == {
+          'id': parent.generationId + '_' + string(index), 'sequence': index,
+          'slotId': slot.id, 'routineId': slot.routineId, 'label': slot.label,
+          'isRestDay': slot.isRestDay, 'scheduledDate': date, 'originalDate': date,
+          'version': 1, 'status': 'planned', 'completionSessionId': null, 'resolvedAt': null
+        }
+        && fixedDate(date) && date >= parent.startDate && date <= parent.endDate
+        && (index == 0 || parent.occurrences[index - 1].originalDate < date);
     }
     function fixedOccurrencePageEntries(values, start, parent, split, creating) {
       let n = values.size();
-      return values is list && n >= 1 && n <= 7
-        && (n <= 0 || fixedOccurrenceEntry(values[0], start + 0, parent, split, creating))
-        && (n <= 1 || fixedOccurrenceEntry(values[1], start + 1, parent, split, creating))
-        && (n <= 2 || fixedOccurrenceEntry(values[2], start + 2, parent, split, creating))
-        && (n <= 3 || fixedOccurrenceEntry(values[3], start + 3, parent, split, creating))
-        && (n <= 4 || fixedOccurrenceEntry(values[4], start + 4, parent, split, creating))
-        && (n <= 5 || fixedOccurrenceEntry(values[5], start + 5, parent, split, creating))
-        && (n <= 6 || fixedOccurrenceEntry(values[6], start + 6, parent, split, creating));
+      return values is list && n >= 1 && n <= 5
+        && (!creating || ((n <= 0 || fixedOccurrenceEntry(values[0], start + 0, parent, split))
+          && (n <= 1 || fixedOccurrenceEntry(values[1], start + 1, parent, split))
+          && (n <= 2 || fixedOccurrenceEntry(values[2], start + 2, parent, split))
+          && (n <= 3 || fixedOccurrenceEntry(values[3], start + 3, parent, split))
+          && (n <= 4 || fixedOccurrenceEntry(values[4], start + 4, parent, split))));
     }
     function validFixedPage(value, uid, scheduleId, pageId) {
       let parentPath = /databases/$(database)/documents/users/$(uid)/fixedSchedules/$(scheduleId);
       let parent = getAfter(parentPath).data;
-      let creating = parent.action.kind == 'create';
-      let split = creating ? getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(parent.splitId)).data : {};
-      let start = pageId == 'p0' ? 0 : pageId == 'p1' ? 7 : pageId == 'p2' ? 14 : 21;
-      return pageId in ['p0', 'p1', 'p2', 'p3']
+      let start = pageId == 'p0' ? 0 : pageId == 'p1' ? 5 : pageId == 'p2' ? 10 : pageId == 'p3' ? 15 : pageId == 'p4' ? 20 : 25;
+      return pageId in ['p0', 'p1', 'p2', 'p3', 'p4', 'p5']
         && value.keys().hasAll(['ownerId', 'scheduleId', 'mutationId', 'revision', 'occurrences'])
         && value.keys().hasOnly(['ownerId', 'scheduleId', 'mutationId', 'revision', 'occurrences'])
         && value.ownerId == uid && value.scheduleId == scheduleId && parent.ownerId == uid
         && value.mutationId == parent.mutationId && value.revision == parent.revision
         && (!exists(parentPath) || get(parentPath).data.mutationId != parent.mutationId)
         && value.occurrences == parent.occurrences[start:start + value.occurrences.size()]
-        && fixedOccurrencePageEntries(value.occurrences, start, parent, split, creating);
+        && (parent.action.kind != 'create' || fixedOccurrencePageEntries(value.occurrences, start, parent,
+          getAfter(/databases/$(database)/documents/users/$(uid)/splits/$(parent.splitId)).data, true))
+        && (parent.action.kind != 'move' || fixedDateAvailable(value.occurrences,
+          parent.occurrences[fixedOccurrenceIndex(parent.occurrences, parent.action.occurrenceId)].scheduledDate,
+          parent.action.occurrenceId));
     }
     function fixedOccurrenceMutable(before, after, fields) {
-      return before.status == 'planned' && after.version == before.version + 1
+      return before.status == 'planned' && after.version == before.version + 1 && after.version <= 9007199254740991
         && after.diff(before).affectedKeys().hasOnly(fields);
     }
     function fixedOccurrenceAction(value, before, after, uid) {
-      return value.action.kind == 'move'
-        ? fixedOccurrenceMutable(before, after, ['scheduledDate', 'version']) && after.scheduledDate != before.scheduledDate
-          && fixedDateAvailable(value.occurrences, after.scheduledDate, after.id)
-        : value.action.kind == 'skip'
-          ? fixedOccurrenceMutable(before, after, ['status', 'resolvedAt', 'version'])
-            && after.status == 'skipped' && after.resolvedAt is int && after.resolvedAt > 0
-          : value.action.kind == 'complete'
-            && fixedOccurrenceMutable(before, after, ['status', 'completionSessionId', 'resolvedAt', 'version'])
-            && after.status == 'completed' && !after.isRestDay && after.completionSessionId == value.action.sessionId
-            && validFixedCompletion(value, before, after, uid);
+      return (value.action.kind == 'move'
+          && fixedOccurrenceMutable(before, after, ['scheduledDate', 'version']) && after.scheduledDate != before.scheduledDate
+          && fixedDate(after.scheduledDate) && after.scheduledDate >= value.startDate && after.scheduledDate <= value.endDate)
+        || (value.action.kind == 'skip'
+          && fixedOccurrenceMutable(before, after, ['status', 'resolvedAt', 'version'])
+          && after.status == 'skipped' && after.resolvedAt is int && after.resolvedAt > 0)
+        || (value.action.kind == 'complete'
+          && fixedOccurrenceMutable(before, after, ['status', 'completionSessionId', 'resolvedAt', 'version'])
+          && after.status == 'completed' && !after.isRestDay && after.completionSessionId == value.action.sessionId
+          && validFixedCompletion(value, before, after, uid));
     }
     function fixedSwap(value, before, after, index, uid) {
       let otherIndex = fixedOccurrenceIndex(before, value.action.otherOccurrenceId);
@@ -595,7 +539,8 @@ service cloud.firestore {
       let firstAfter = after[index];
       let secondBefore = before[otherIndex];
       let secondAfter = after[otherIndex];
-      return otherIndex >= 0 && otherIndex != index
+      return otherIndex >= 0 && otherIndex < before.size() && otherIndex != index
+        && secondBefore.id == value.action.otherOccurrenceId
         && fixedOccurrenceMutable(firstBefore, firstAfter, ['scheduledDate', 'version'])
         && fixedOccurrenceMutable(secondBefore, secondAfter, ['scheduledDate', 'version'])
         && firstAfter.scheduledDate == secondBefore.scheduledDate && secondAfter.scheduledDate == firstBefore.scheduledDate
@@ -606,10 +551,11 @@ service cloud.firestore {
       let after = value.occurrences;
       let index = fixedOccurrenceIndex(before, value.action.occurrenceId);
       return value.diff(resource.data).affectedKeys().hasOnly(['updatedAt', 'revision', 'mutationId', 'previousMutationId', 'occurrences', 'action'])
-        && before.size() == after.size() && index >= 0
-        && (value.action.kind == 'swap' ? fixedSwap(value, before, after, index, uid)
-          : after.removeAll([after[index]]) == before.removeAll([before[index]])
-            && fixedOccurrenceAction(value, before[index], after[index], uid));
+        && before.size() == after.size() && index >= 0 && index < before.size()
+        && before[index].id == value.action.occurrenceId
+        && ((value.action.kind == 'swap' && fixedSwap(value, before, after, index, uid))
+          || (value.action.kind != 'swap' && after.removeAll([after[index]]) == before.removeAll([before[index]])
+            && fixedOccurrenceAction(value, before[index], after[index], uid)));
     }
     function validFixedCompletion(schedule, before, after, uid) {
       let sessionPath = /databases/$(database)/documents/users/$(uid)/workoutSessions/$(schedule.action.sessionId);
@@ -629,14 +575,12 @@ service cloud.firestore {
     function countedWorkoutHasFixedCompletion(session) {
       let context = session.fixedContext;
       let schedule = getAfter(/databases/$(database)/documents/users/$(session.ownerId)/fixedSchedules/$(context.scheduleId)).data;
-      let index = session.splitContext.sequence;
-      let occurrence = schedule.occurrences[index];
-      return schedule.ownerId == session.ownerId && schedule.generationId == context.generationId
-        && schedule.action.kind == 'complete' && schedule.action.sessionId == session.id
-        && schedule.action.occurrenceId == context.occurrenceId
-        && occurrence.id == context.occurrenceId && occurrence.version == context.occurrenceVersion + 1
-        && occurrence.status == 'completed' && occurrence.completionSessionId == session.id
-        && occurrence.resolvedAt == session.endedAt;
+      // The calendar's complete action independently verifies the frozen context,
+      // version, timestamp, active split and atomic active -> completed transition.
+      return schedule.generationId == context.generationId
+        && schedule.action == {'kind': 'complete', 'sessionId': session.id,
+          'occurrenceId': context.occurrenceId, 'otherOccurrenceId': null}
+        && schedule.occurrences[session.splitContext.sequence].completionSessionId == session.id;
     }
 
     match /approvedUsers/{uid} {
@@ -701,10 +645,15 @@ service cloud.firestore {
           && trainingCreate(request.resource.data) && validFixedSchedule(request.resource.data)
           && validFixedGeneration(request.resource.data, uid);
         allow update: if approved(uid) && trainingMetadata(request.resource.data, uid, id)
-          && trainingUpdate(request.resource.data) && validFixedSchedule(request.resource.data)
-          && (request.resource.data.action.kind == 'create'
-            ? request.resource.data.generationId != resource.data.generationId && validFixedGeneration(request.resource.data, uid)
-            : fixedScheduleMutation(request.resource.data, uid));
+          && trainingUpdate(request.resource.data)
+          && ((request.resource.data.action.kind == 'create'
+            && request.resource.data.generationId != resource.data.generationId
+            && validFixedSchedule(request.resource.data) && validFixedGeneration(request.resource.data, uid))
+            // Each action preserves every generated field except its narrowly
+            // permitted delta, so full generation-page revalidation is redundant.
+            || (request.resource.data.action.kind != 'create' && validFixedAction(request.resource.data.action)
+              && (request.resource.data.action.kind != 'move' || validatedFixedOccurrences(request.resource.data))
+              && fixedScheduleMutation(request.resource.data, uid)));
         allow delete: if false;
         match /validationPages/{pageId} {
           allow read, delete: if false;

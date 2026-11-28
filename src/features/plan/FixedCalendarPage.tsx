@@ -183,7 +183,9 @@ export default function FixedCalendarPage() {
           <strong>{occurrence.label}</strong>
           <p>{occurrence.isRestDay ? 'Rest' : (routine?.name ?? 'Routine unavailable')}</p>
           <span className="subtle-caption">
-            {occurrence.status === 'planned' && !occurrence.isRestDay && occurrence.scheduledDate < today
+            {occurrence.status === 'planned' &&
+            !occurrence.isRestDay &&
+            occurrence.scheduledDate < today
               ? 'Overdue'
               : occurrence.status}{' '}
             · {occurrence.scheduledDate}
@@ -242,7 +244,7 @@ export default function FixedCalendarPage() {
         <CalendarDays size={30} />
       </div>
       <PlanNavigation />
-      {(training.error || workouts.error) && (
+      {!action && (training.error || workouts.error) && (
         <p role="alert" className="workout-error">
           {training.error || workouts.error}
         </p>
@@ -335,7 +337,9 @@ export default function FixedCalendarPage() {
             </p>
           )}
           {workouts.writable === false && (
-            <p role="status">Another tab is editing your workouts. Close it to change this calendar.</p>
+            <p role="status">
+              Another tab is editing your workouts. Close it to change this calendar.
+            </p>
           )}
           {calendar && (
             <>
@@ -438,6 +442,22 @@ export default function FixedCalendarPage() {
                   ? 'This marks the occurrence skipped. It will stay visible in this calendar; it does not create a completed workout.'
                   : 'Only planned occurrences can change. Completed workout history stays on its original occurrence.'}
             </Dialog.Description>
+            {(training.hasPendingWrites || workouts.hasPendingWrites) && (
+              <p role="status">Wait for your latest changes to sync before saving this change.</p>
+            )}
+            {workouts.writable === false && (
+              <p role="status">
+                Another tab is editing your workouts. Close it to save this change.
+              </p>
+            )}
+            {workouts.activeSession && (
+              <p role="status">Finish or end your current workout before saving this change.</p>
+            )}
+            {(training.error || workouts.error) && (
+              <p role="alert" className="workout-error">
+                {training.error || workouts.error}
+              </p>
+            )}
             {action?.kind === 'move' && (
               <div className="field">
                 <label htmlFor="fixed-target">New date</label>

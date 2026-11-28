@@ -101,6 +101,16 @@ function FixedRecommendation({ disabled = false, onStartingChange }: Props) {
           Wait for your latest changes to sync before starting another scheduled workout.
         </p>
       )}
+      {workouts.writable === false && (
+        <p className="subtle-caption">
+          Another tab is editing your workouts. Close it to start a scheduled workout here.
+        </p>
+      )}
+      {(training.error || workouts.error) && (
+        <p role="alert" className="workout-error">
+          {training.error || workouts.error}
+        </p>
+      )}
       {error && (
         <p role="alert" className="workout-error">
           {error}

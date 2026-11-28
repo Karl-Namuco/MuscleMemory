@@ -49,6 +49,7 @@ const mock = vi.hoisted(() => ({
   listeners: new Map<Reference, (snapshot: Snapshot) => void>(),
   commits: [] as PendingCommit[],
   delayPut: null as null | ((checkpoint: WorkoutCheckpoint) => Promise<void>),
+  delayClear: null as null | (() => Promise<void>),
   offline: false,
   deferSnapshots: false,
 }))
@@ -87,7 +88,9 @@ vi.mock('../src/services/workouts/storage', async (importOriginal) => {
     deleteWorkoutCheckpoint: vi.fn(async (uid: string, id: string) => {
       mock.persisted.delete(`${uid}:${id}`)
     }),
-    clearMalformedWorkoutCheckpoints: vi.fn(async () => undefined),
+    clearMalformedWorkoutCheckpoints: vi.fn(async () => {
+      await mock.delayClear?.()
+    }),
   }
 })
 vi.mock('firebase/firestore', () => ({
@@ -241,6 +244,7 @@ beforeEach(() => {
   mock.listeners.clear()
   mock.commits.length = 0
   mock.delayPut = null
+  mock.delayClear = null
   mock.offline = false
   mock.deferSnapshots = false
   current = null
@@ -305,65 +309,200 @@ function performed(all = true) {
 }
 
 function enableFixed() {
-  const timestamp=Date.now()-1000
-  const split:TrainingSplit={id:'fixed-split',ownerId:mock.uid,createdAt:timestamp,updatedAt:timestamp,archived:false,schemaVersion:1,revision:1,mutationId:'fixed-split-mutation',previousMutationId:null,name:'Fixed strength',description:'',mode:'fixed',slots:[{id:'fixed-slot',label:'Strength',routineId:mock.routines[0].id,isRestDay:false}]}
-  mock.splits=[split];mock.activeSplitId=split.id
-  const calendar=createFixedSchedule({split,routines:mock.routines,startDate:'2026-11-25',timeZone:'UTC',preferredDays:[],generationId:'fixed-calendar',now:Date.now()})
-  mock.fixedSchedules=[calendar]
-  mock.remote.set(`users/${mock.uid}/fixedSchedules/${calendar.id}`,calendar)
+  const timestamp = Date.now() - 1000
+  const split: TrainingSplit = {
+    id: 'fixed-split',
+    ownerId: mock.uid,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archived: false,
+    schemaVersion: 1,
+    revision: 1,
+    mutationId: 'fixed-split-mutation',
+    previousMutationId: null,
+    name: 'Fixed strength',
+    description: '',
+    mode: 'fixed',
+    slots: [
+      { id: 'fixed-slot', label: 'Strength', routineId: mock.routines[0].id, isRestDay: false },
+    ],
+  }
+  mock.splits = [split]
+  mock.activeSplitId = split.id
+  const calendar = createFixedSchedule({
+    split,
+    routines: mock.routines,
+    startDate: '2026-11-25',
+    timeZone: 'UTC',
+    preferredDays: [],
+    generationId: 'fixed-calendar',
+    now: Date.now(),
+  })
+  mock.fixedSchedules = [calendar]
+  mock.remote.set(`users/${mock.uid}/fixedSchedules/${calendar.id}`, calendar)
   return calendar
 }
 
-describe('Fixed workout coordination',()=>{
-  it('completes the frozen occurrence atomically with history and checkpoints its calendar attempt',async()=>{
-    const calendar=enableFixed()
-    render(tree());await settle()
-    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
-    expect(api().activeSession?.fixedContext).toMatchObject({generationId:calendar.generationId,occurrenceId:calendar.occurrences[0].id,occurrenceVersion:1})
-    await advance();await confirm(0)
-    const session=performed()
-    await act(async()=>{await api().finishWorkout(session,'completed')});await advance()
-    const changed=mock.commits[1].writes.find(write=>write.path.endsWith(`/fixedSchedules/${calendar.id}`))!.value as FixedSchedule
-    expect(changed.occurrences[0]).toMatchObject({status:'completed',completionSessionId:session.id,version:2})
+describe('Fixed workout coordination', () => {
+  it('rechecks the latest plan after a queued start waits behind device storage', async () => {
+    enableFixed()
+    const view = render(tree())
+    await settle()
+    let release!: () => void
+    mock.delayClear = () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      })
+    let clearing!: Promise<void>
+    let starting!: Promise<string | unknown>
+    await act(async () => {
+      clearing = api().clearUnreadableRecovery()
+      for (let count = 0; count < 5; count++) await Promise.resolve()
+      starting = api()
+        .startWorkout(mock.routines[0], { scheduled: true })
+        .catch((failure: unknown) => failure)
+    })
+    mock.trainingLoading = true
+    view.rerender(tree())
+    await settle()
+    let failure: unknown
+    await act(async () => {
+      release()
+      await clearing
+      failure = await starting
+    })
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain('finish synchronizing')
+    expect(mock.persisted.size).toBe(0)
+  })
+
+  it('completes the frozen occurrence atomically with history and checkpoints its calendar attempt', async () => {
+    const calendar = enableFixed()
+    render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    expect(api().activeSession?.fixedContext).toMatchObject({
+      generationId: calendar.generationId,
+      occurrenceId: calendar.occurrences[0].id,
+      occurrenceVersion: 1,
+    })
+    await advance()
+    await confirm(0)
+    const session = performed()
+    await act(async () => {
+      await api().finishWorkout(session, 'completed')
+    })
+    await advance()
+    const changed = mock.commits[1].writes.find((write) =>
+      write.path.endsWith(`/fixedSchedules/${calendar.id}`),
+    )!.value as FixedSchedule
+    expect(changed.occurrences[0]).toMatchObject({
+      status: 'completed',
+      completionSessionId: session.id,
+      version: 2,
+    })
     expect(changed.occurrences.slice(1)).toEqual(calendar.occurrences.slice(1))
     expect([...mock.persisted.values()][0].attempt?.fixedSchedule).toEqual(changed)
-    expect(mock.commits[1].writes.some(write=>write.path.endsWith('/validationPages/p3'))).toBe(true)
-    await act(async()=>{await api().finishWorkout(session,'completed')});await advance()
+    expect(mock.commits[1].writes.some((write) => write.path.endsWith('/validationPages/p3'))).toBe(
+      true,
+    )
+    await act(async () => {
+      await api().finishWorkout(session, 'completed')
+    })
+    await advance()
     expect(mock.commits).toHaveLength(2)
     await confirm(1)
     expect(mock.persisted.size).toBe(0)
-    await expect(api().startWorkout(mock.routines[0],{scheduled:true,fixedOccurrenceId:calendar.occurrences[0].id})).rejects.toThrow('unavailable')
+    await expect(
+      api().startWorkout(mock.routines[0], {
+        scheduled: true,
+        fixedOccurrenceId: calendar.occurrences[0].id,
+      }),
+    ).rejects.toThrow('unavailable')
   })
-  it('keeps one identity when a scheduled workout finishes offline before its first acknowledgment',async()=>{
-    const calendar=enableFixed();mock.offline=true
-    render(tree());await settle()
-    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
-    await act(async()=>{await api().finishWorkout(performed(),'completed')});await advance()
+  it('keeps one identity when a scheduled workout finishes offline before its first acknowledgment', async () => {
+    const calendar = enableFixed()
+    mock.offline = true
+    render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await act(async () => {
+      await api().finishWorkout(performed(), 'completed')
+    })
+    await advance()
     expect(sessionWrite(0).countsForSplit).toBe(false)
-    expect(mock.commits[0].writes.some(write=>write.path.includes('/fixedSchedules/'))).toBe(false)
-    await confirm(0);await advance(1500)
+    expect(mock.commits[0].writes.some((write) => write.path.includes('/fixedSchedules/'))).toBe(
+      false,
+    )
+    await confirm(0)
+    await advance(1500)
     expect(sessionWrite(1).countsForSplit).toBe(true)
     await confirm(1)
-    expect((mock.remote.get(`users/${mock.uid}/fixedSchedules/${calendar.id}`) as FixedSchedule).occurrences[0].status).toBe('completed')
+    expect(
+      (mock.remote.get(`users/${mock.uid}/fixedSchedules/${calendar.id}`) as FixedSchedule)
+        .occurrences[0].status,
+    ).toBe('completed')
     expect(api().sessions).toHaveLength(1)
   })
-  it.each([false,true])('respects explicit partial inclusion: %s',async(countForSplit)=>{
-    enableFixed();render(tree());await settle()
-    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})})
-    await advance();await confirm(0)
-    await act(async()=>{await api().finishWorkout(performed(false),'completed',{countForSplit})});await advance()
+  it.each([false, true])('respects explicit partial inclusion: %s', async (countForSplit) => {
+    enableFixed()
+    render(tree())
+    await settle()
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await advance()
+    await confirm(0)
+    await act(async () => {
+      await api().finishWorkout(performed(false), 'completed', { countForSplit })
+    })
+    await advance()
     expect(sessionWrite(1).countsForSplit).toBe(countForSplit)
-    expect(mock.commits[1].writes.some(write=>/\/fixedSchedules\/[^/]+$/.test(write.path))).toBe(countForSplit)
+    expect(
+      mock.commits[1].writes.some((write) => /\/fixedSchedules\/[^/]+$/.test(write.path)),
+    ).toBe(countForSplit)
   })
-  it('keeps history without completing a regenerated occurrence and rejects future starts',async()=>{
-    const calendar=enableFixed();const view=render(tree());await settle()
-    await expect(api().startWorkout(mock.routines[0],{scheduled:true,fixedOccurrenceId:calendar.occurrences[1].id})).rejects.toThrow('future')
-    await act(async()=>{await api().startWorkout(mock.routines[0],{scheduled:true})});await advance();await confirm(0)
-    mock.fixedSchedules=[createFixedSchedule({split:mock.splits[0],routines:mock.routines,startDate:'2026-11-25',timeZone:'UTC',preferredDays:[],generationId:'regenerated-calendar',now:Date.now()+1,previous:calendar})]
-    view.rerender(tree());await settle()
-    await act(async()=>{await api().finishWorkout(performed(),'completed')});await advance()
+  it('keeps history without completing a regenerated occurrence and rejects future starts', async () => {
+    const calendar = enableFixed()
+    const view = render(tree())
+    await settle()
+    await expect(
+      api().startWorkout(mock.routines[0], {
+        scheduled: true,
+        fixedOccurrenceId: calendar.occurrences[1].id,
+      }),
+    ).rejects.toThrow('future')
+    await act(async () => {
+      await api().startWorkout(mock.routines[0], { scheduled: true })
+    })
+    await advance()
+    await confirm(0)
+    mock.fixedSchedules = [
+      createFixedSchedule({
+        split: mock.splits[0],
+        routines: mock.routines,
+        startDate: '2026-11-25',
+        timeZone: 'UTC',
+        preferredDays: [],
+        generationId: 'regenerated-calendar',
+        now: Date.now() + 1,
+        previous: calendar,
+      }),
+    ]
+    view.rerender(tree())
+    await settle()
+    await act(async () => {
+      await api().finishWorkout(performed(), 'completed')
+    })
+    await advance()
     expect(sessionWrite(1).countsForSplit).toBe(false)
-    expect(mock.commits[1].writes.some(write=>write.path.includes('/fixedSchedules/'))).toBe(false)
+    expect(mock.commits[1].writes.some((write) => write.path.includes('/fixedSchedules/'))).toBe(
+      false,
+    )
   })
 })
 

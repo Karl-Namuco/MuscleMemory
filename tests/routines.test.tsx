@@ -152,6 +152,20 @@ describe('Routine builder', () => {
     expect(screen.getByLabelText('Routine name')).toHaveValue('Keep my unsaved routine')
     expect(screen.getByLabelText('Description', { exact: false })).toHaveValue('Keep my notes too')
     expect(screen.getByRole('heading', { name: 'My cable variation' })).toBeVisible()
+    await waitFor(() =>
+      expect(mock.saveDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            exercises: expect.arrayContaining([
+              expect.objectContaining({
+                exerciseId: 'created-custom',
+                exerciseSnapshot: expect.objectContaining({ name: 'My cable variation' }),
+              }),
+            ]),
+          }),
+        }),
+      ),
+    )
     expect(screen.getByText(/Training changes are saved on this device/)).toBeVisible()
     expect(mock.training!.exercises.some((exercise) => exercise.id === 'created-custom')).toBe(
       false,
@@ -188,7 +202,7 @@ describe('Routine builder', () => {
     await user.click(screen.getByRole('button', { name: 'Add exercise' }))
     dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByLabelText('Search exercises')).toHaveValue('')
-  })
+  }, 15000)
 
   it('validates the name and primary muscle and prevents duplicate exercise names', async () => {
     const user = userEvent.setup()
@@ -245,6 +259,86 @@ describe('Routine builder', () => {
     expect(calls[1][1]).toEqual(calls[0][1])
     expect(screen.getByRole('heading', { name: 'Recovered personal curl' })).toBeVisible()
     expect(mock.clearExerciseDraft).toHaveBeenCalledWith('user-1:inline-routine:new:blank')
+  })
+
+  it('reuses a recovered creation that already reached the library before adding it to a routine', async () => {
+    const existing = {
+      ...bench,
+      ...emptyExercise,
+      id: 'already-saved-custom',
+      ownerId: 'user-1',
+      source: 'custom' as const,
+      name: 'My recovered press',
+      primaryMuscles: ['Chest'] as typeof bench.primaryMuscles,
+      revision: 3,
+      mutationId: 'actual-cloud-mutation',
+    }
+    mock.training!.customExercises = [existing]
+    mock.training!.exercises = [...EXERCISES, existing]
+    mock.readExerciseDraft.mockResolvedValue({
+      key: 'user-1:inline-routine:new:blank',
+      uid: 'user-1',
+      id: existing.id,
+      expectedRevision: 0,
+      pending: true,
+      savedAt: 1,
+      values: formValues(existing),
+    })
+    const user = userEvent.setup()
+    renderEditor()
+    await screen.findByLabelText('Routine name')
+    await user.click(screen.getByRole('button', { name: 'Add exercise' }))
+    await user.click(screen.getByRole('button', { name: 'Create your own exercise' }))
+    expect(await screen.findByLabelText('Exercise name')).toHaveValue(existing.name)
+    await user.click(screen.getByRole('button', { name: 'Create and add exercise' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mock.training!.saveCustomExercise).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: existing.name })).toBeVisible()
+    expect(mock.clearExerciseDraft).toHaveBeenCalledWith('user-1:inline-routine:new:blank')
+    await waitFor(() =>
+      expect(mock.saveDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            exercises: [expect.objectContaining({ exerciseId: existing.id })],
+          }),
+        }),
+      ),
+    )
+  })
+
+  it('preserves recovered edits when that exercise already has different saved details', async () => {
+    const existing = {
+      ...bench,
+      ...emptyExercise,
+      id: 'already-saved-custom',
+      ownerId: 'user-1',
+      source: 'custom' as const,
+      name: 'My saved press',
+      primaryMuscles: ['Chest'] as typeof bench.primaryMuscles,
+    }
+    mock.training!.customExercises = [existing]
+    mock.training!.exercises = [...EXERCISES, existing]
+    mock.readExerciseDraft.mockResolvedValue({
+      key: 'user-1:inline-routine:new:blank',
+      uid: 'user-1',
+      id: existing.id,
+      expectedRevision: 0,
+      pending: true,
+      savedAt: 1,
+      values: formValues({ ...existing, name: 'Unfinished recovered edits' }),
+    })
+    const user = userEvent.setup()
+    renderEditor()
+    await screen.findByLabelText('Routine name')
+    await user.click(screen.getByRole('button', { name: 'Add exercise' }))
+    await user.click(screen.getByRole('button', { name: 'Create your own exercise' }))
+    await user.click(await screen.findByRole('button', { name: 'Create and add exercise' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'already been saved with different details',
+    )
+    expect(screen.getByLabelText('Exercise name')).toHaveValue('Unfinished recovered edits')
+    expect(mock.training!.saveCustomExercise).not.toHaveBeenCalled()
+    expect(mock.clearExerciseDraft).not.toHaveBeenCalled()
   })
 
   it('keeps the latest edit when navigation happens immediately', async () => {

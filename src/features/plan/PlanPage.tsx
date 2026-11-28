@@ -143,8 +143,13 @@ export default function PlanPage() {
             )}
           </div>
           <p className="subtle-caption">
-            These are preferences. Calendar sessions and adaptive scheduling are coming later.
+            These are preferences. Fixed calendars use the weekdays chosen when you create them.
           </p>
+          {split?.mode === 'fixed' && (
+            <Link className="text-link" to="/plan/calendar">
+              View training calendar
+            </Link>
+          )}
         </section>
       </div>
     </div>

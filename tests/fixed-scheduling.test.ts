@@ -253,10 +253,10 @@ describe('Fixed calendar generation and Gregorian dates', () => {
     ).toThrow(/another split or owner/)
   })
 
-  it('splits every occurrence into four bounded validation pages using current mutation metadata', () => {
+  it('splits every occurrence into six bounded validation pages using current mutation metadata', () => {
     const calendar = create()
     const pages = fixedScheduleValidationPages(calendar)
-    expect(pages.map((page) => page.id)).toEqual(['p0', 'p1', 'p2', 'p3'])
+    expect(pages.map((page) => page.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4', 'p5'])
     expect(pages.flatMap((page) => page.value.occurrences)).toEqual(calendar.occurrences)
     for (const page of pages)
       expect(page.value).toMatchObject({
@@ -266,7 +266,7 @@ describe('Fixed calendar generation and Gregorian dates', () => {
         mutationId: 'generation-1',
         occurrences: expect.any(Array),
       })
-    expect(pages.every((page) => page.value.occurrences.length <= 7)).toBe(true)
+    expect(pages.every((page) => page.value.occurrences.length <= 5)).toBe(true)
   })
 })
 

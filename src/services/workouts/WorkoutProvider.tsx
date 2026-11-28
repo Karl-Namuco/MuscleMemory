@@ -838,6 +838,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
   ) {
     const ownerId = requireOwner()
     return enqueue(async () => {
+      const plan = trainingLatest.current
       if (
         quarantined.current.length ||
         [...checkpoints.current.values()].some(
@@ -848,9 +849,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         throw new Error(
           'Resume your active workout or finish synchronizing its recovery copy before starting another.',
         )
-      const currentRoutine = training.routines.find(
-        (item) => item.id === routine.id && !item.archived,
-      )
+      const currentRoutine = plan.routines.find((item) => item.id === routine.id && !item.archived)
       if (!currentRoutine || currentRoutine.revision !== routine.revision)
         throw new Error(
           'This routine changed. Reopen Train and review the latest routine before starting.',
@@ -858,19 +857,14 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
       let context: WorkoutSession['splitContext'] = null
       let fixedContext: WorkoutSession['fixedContext']
       if (options?.scheduled) {
-        if (training.loading || training.error || training.hasPendingWrites)
+        if (plan.loading || plan.error || plan.hasPendingWrites)
           throw new Error(
             'Wait for your training plan to finish synchronizing before starting its next workout.',
           )
-        const split = training.splits.find((item) => item.id === training.activeSplitId) ?? null
+        const split = plan.splits.find((item) => item.id === plan.activeSplitId) ?? null
         if (split?.mode === 'fixed') {
           const calendar = currentCalendar(split.id)
-          const recommendation = getFixedRecommendation(
-            calendar,
-            split,
-            training.routines,
-            Date.now(),
-          )
+          const recommendation = getFixedRecommendation(calendar, split, plan.routines, Date.now())
           const occurrence = options.fixedOccurrenceId
             ? calendar?.occurrences.find((item) => item.id === options.fixedOccurrenceId)
             : recommendation.kind === 'workout'
@@ -878,6 +872,8 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
               : undefined
           if (
             !calendar ||
+            split.archived ||
+            calendar.archived ||
             calendar.splitRevision !== split.revision ||
             !occurrence ||
             occurrence.status !== 'planned' ||
@@ -903,7 +899,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         } else {
           const recommendation = getRollingRecommendation(
             split,
-            training.routines,
+            plan.routines,
             state.current?.rollingProgress ?? {},
             Date.now(),
             account?.preferences.timeZone ?? 'UTC',
@@ -1002,6 +998,7 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
   ) {
     const ownerId = requireOwner()
     await enqueue(async () => {
+      const plan = trainingLatest.current
       const row = checkpoints.current.get(input.id)
       const current = row?.session ?? cloud.current.get(input.id)
       if (!current || current.ownerId !== ownerId) throw new Error('This workout is unavailable.')
@@ -1039,12 +1036,12 @@ export function WorkoutProvider({ children }: { children: ReactNode }) {
         Math.max(Date.now(), source.updatedAt),
       )
       const split =
-        training.splits.find(
-          (item) => item.id === training.activeSplitId && item.id === value.splitContext?.splitId,
+        plan.splits.find(
+          (item) => item.id === plan.activeSplitId && item.id === value.splitContext?.splitId,
         ) ?? null
       const requestedCount = options?.countForSplit ?? !isPartialWorkout(value)
       const candidate = { ...value, countsForSplit: finalStatus === 'completed' && requestedCount }
-      const waitingForPlan = training.loading || training.error || training.hasPendingWrites
+      const waitingForPlan = plan.loading || plan.error || plan.hasPendingWrites
       value.countsForSplit =
         candidate.countsForSplit &&
         value.splitContext?.sequence !== undefined &&

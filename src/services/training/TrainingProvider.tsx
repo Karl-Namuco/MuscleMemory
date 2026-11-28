@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import {
   collection,
   doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -62,6 +63,8 @@ type Waiter = {
 }
 const TrainingContext = createContext<TrainingData | null>(null)
 const LIST_LIMIT = 200
+const RECOVERY_WAIT_MESSAGE =
+  'Training changes from this device are waiting for cloud confirmation. Keep your editor drafts until synchronization finishes; retry any rejected changes.'
 const message = (failure: unknown) =>
   failure instanceof ZodError
     ? failure.issues[0]?.message || 'Invalid training data.'
@@ -124,6 +127,7 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
     const ready = new Set<string>()
     const lists = new Map<CollectionName, Set<string>>()
     const extras = new Map<string, Unsubscribe>()
+    const recoveryReferences = new Set<string>()
     let stopped = false
     const current = () => !stopped && generation.current === token && activeUid.current === uid
     const fail = (failure: unknown) => {
@@ -182,6 +186,8 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
           failedMutations.current.add(recovery.mutationId)
       }
       setRecoveryCount(remaining.length)
+      if (!remaining.length)
+        setError((current) => (current === RECOVERY_WAIT_MESSAGE ? null : current))
       setHasPendingWrites(
         remaining.length > 0 ||
           [...observed.current.values(), ...sourceStates.current.values()].some(
@@ -266,8 +272,18 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
         if (slot.routineId && !lists.get('routines')?.has(slot.routineId))
           needed.add(recordKey('routines', slot.routineId))
       for (const recovery of recoveries.current)
-        if (recovery.collection !== 'trainingSettings')
-          needed.add(recordKey(recovery.collection, recovery.id))
+        if (recovery.collection !== 'trainingSettings') {
+          const key = recordKey(recovery.collection, recovery.id)
+          needed.add(key)
+          recoveryReferences.add(key)
+        }
+      // A direct recovery snapshot can confirm before the bounded list catches
+      // up. Keep that known record observed until the list takes ownership.
+      for (const key of recoveryReferences) {
+        const [name, id] = key.split('/') as [CollectionName, string]
+        if (lists.get(name)?.has(id)) recoveryReferences.delete(key)
+        else if (records.current.has(key)) needed.add(key)
+      }
       for (const key of needed)
         if (!extras.has(key)) {
           const [collectionName, id] = key.split('/') as [CollectionName, string]
@@ -388,10 +404,7 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
         fail,
       ),
     )
-    if (recoveries.current.length)
-      setError(
-        'Training changes from this device are waiting for cloud confirmation. Keep your editor drafts until synchronization finishes; retry any rejected changes.',
-      )
+    if (recoveries.current.length) setError(RECOVERY_WAIT_MESSAGE)
     const unregister = registerLogoutGuard(uid, () => {
       if (
         loadingRef.current ||
@@ -580,6 +593,7 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
     })
   }
   async function saveCustomExercise(input: CustomExerciseInput, options?: WriteOptions) {
+    const token = generation.current
     const parsed = customExerciseInputSchema.parse(input),
       previous = previousRecord('customExercises', options)
     const id = options?.id ?? crypto.randomUUID()
@@ -591,11 +605,75 @@ export function TrainingProvider({ children }: { children: ReactNode }) {
     if (EXERCISES.some((exercise) => exercise.id === id))
       throw new Error('Built-in exercises cannot be overwritten.')
     await commit([{ collection: 'customExercises', value }])
+    if (generation.current !== token || activeUid.current !== value.ownerId)
+      throw new Error('The account changed before the exercise save finished.')
+    // The batch can acknowledge before its listener. The returned ID must be
+    // immediately usable when the inline picker adds it to an unsaved routine.
+    const key = recordKey('customExercises', id)
+    const observed = records.current.get(key)
+    if (!observed || observed.revision < value.revision) {
+      records.current.set(key, value)
+      setCustomExercises((current) => {
+        if (generation.current !== token) return current
+        return [...current.filter((item) => item.id !== id), value]
+      })
+    }
     return id
   }
   async function saveRoutine(input: RoutineInput, options?: WriteOptions) {
+    const ownerId = requireUser()
+    const token = generation.current
     const parsed = routineInputSchema.parse(input),
       previous = previousRecord('routines', options)
+    // A restored draft can reference a confirmed custom exercise before its
+    // bounded library query hydrates, or after that exercise leaves the recent
+    // 200 records. Resolve those exact account-scoped references before saving.
+    const missing = [
+      ...new Set(
+        parsed.exercises
+          .filter(
+            (entry) =>
+              !EXERCISES.some((exercise) => exercise.id === entry.exerciseId) &&
+              !records.current.has(recordKey('customExercises', entry.exerciseId)) &&
+              !(previous as Routine | undefined)?.exercises.some(
+                (item) => item.id === entry.id && item.exerciseId === entry.exerciseId,
+              ),
+          )
+          .map((entry) => entry.exerciseId),
+      ),
+    ]
+    await Promise.all(
+      missing.map(async (id) => {
+        const snapshot = await getDoc(
+          doc(getFirebaseServices().db, 'users', ownerId, 'customExercises', id),
+        )
+        if (generation.current !== token || activeUid.current !== ownerId)
+          throw new Error('The account changed before the routine references finished loading.')
+        const key = recordKey('customExercises', id)
+        const known = records.current.get(key) as Exercise | undefined
+        if (!snapshot.exists()) {
+          if (known) return
+          throw new Error(
+            'One exercise is unavailable on this device or account. Reconnect or choose a replacement; your routine draft is preserved.',
+          )
+        }
+        const exercise = customExerciseSchema.parse(snapshot.data())
+        if (exercise.id !== id || exercise.ownerId !== ownerId)
+          throw new Error('An exercise reference has invalid ownership or an identifier.')
+        if (!known || known.revision < exercise.revision) {
+          records.current.set(key, exercise)
+          setCustomExercises((current) => {
+            if (
+              generation.current !== token ||
+              (current.find((item) => item.id === id)?.revision ?? 0) > exercise.revision
+            )
+              return current
+            return [...current.filter((item) => item.id !== id), exercise]
+          })
+        }
+      }),
+    )
+    requireUser()
     for (const entry of parsed.exercises) {
       const exercise =
         EXERCISES.find((item) => item.id === entry.exerciseId) ??

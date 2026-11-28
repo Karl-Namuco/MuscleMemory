@@ -42,6 +42,7 @@ const mock = vi.hoisted(() => ({
   cached: false,
   writable: true,
   loading: false,
+  trainingLoading: false,
   trainingPending: false,
   trainingError: null as string | null,
   error: null as string | null,
@@ -54,7 +55,7 @@ vi.mock('../src/services/training/TrainingProvider', () => ({
     splits: mock.splits,
     fixedSchedules: mock.fixedSchedules,
     activeSplitId: mock.activeSplitId,
-    loading: mock.loading,
+    loading: mock.loading || mock.trainingLoading,
     hasPendingWrites: mock.trainingPending,
     error: mock.trainingError,
   }),
@@ -183,6 +184,7 @@ beforeEach(() => {
   mock.cached = false
   mock.writable = true
   mock.loading = false
+  mock.trainingLoading = false
   mock.trainingPending = false
   mock.trainingError = null
   mock.save.mockReset().mockResolvedValue(undefined)
@@ -261,20 +263,17 @@ describe('Workout logger', () => {
     },
   )
 
-  it.each(['adaptive'] as const)(
-    'explains that %s recommendations are upcoming',
-    (mode) => {
-      const split = useRollingSplit()
-      split.mode = mode
-      render(app('/train'))
-      expect(screen.getByRole('region', { name: 'Your next workout' })).toHaveTextContent(
-        'Fixed and Adaptive recommendations are coming',
-      )
-      expect(
-        screen.queryByRole('button', { name: 'Start recommended workout' }),
-      ).not.toBeInTheDocument()
-    },
-  )
+  it.each(['adaptive'] as const)('explains that %s recommendations are upcoming', (mode) => {
+    const split = useRollingSplit()
+    split.mode = mode
+    render(app('/train'))
+    expect(screen.getByRole('region', { name: 'Your next workout' })).toHaveTextContent(
+      'Adaptive recommendations are coming',
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Start recommended workout' }),
+    ).not.toBeInTheDocument()
+  })
 
   it.each([false, true])(
     'finishes partial scheduled work with countForSplit=%s only after an explicit choice',
@@ -376,7 +375,7 @@ describe('Workout logger', () => {
       const session = active(['weight-reps', 'reps'])
       scheduleSession(session)
       if (state === 'loading') {
-        mock.loading = true
+        mock.trainingLoading = true
         mock.splits = []
       }
       if (state === 'pending') {
@@ -475,6 +474,88 @@ describe('Workout logger', () => {
     expect(screen.getByRole('button', { name: 'End early' })).toBeDisabled()
     expect(mock.save).not.toHaveBeenCalled()
   })
+
+  it('keeps a recovered checkpoint read-only until workout synchronization is ready', () => {
+    const session = active(['weight-reps', 'weight-reps'])
+    session.exercises[0].sets[0] = {
+      ...session.exercises[0].sets[0],
+      weightKg: 45.3592,
+      inputWeightUnit: 'lb',
+      reps: 8,
+    }
+    session.exercises[1].sets[0] = {
+      ...session.exercises[1].sets[0],
+      weightKg: 55,
+      reps: 10,
+      completedAt: Date.now(),
+    }
+    mock.loading = true
+    const view = render(app(`/train/${session.id}`))
+    expect(screen.getByRole('status')).toHaveTextContent('Restoring your saved workout…')
+    expect(screen.getByLabelText('Weight (lb)')).toHaveValue(100)
+    expect(screen.getByLabelText('Weight (lb)')).toBeDisabled()
+    expect(screen.getAllByRole('combobox')[0]).toBeDisabled()
+    expect(screen.getAllByRole('checkbox')[0]).toBeDisabled()
+    for (const button of screen.getAllByRole('button', { name: 'Finish workout' })) {
+      expect(button).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'End early' })).toBeDisabled()
+    expect(mock.save).not.toHaveBeenCalled()
+    expect(mock.finish).not.toHaveBeenCalled()
+
+    mock.loading = false
+    view.rerender(app(`/train/${session.id}`))
+    expect(screen.queryByText('Restoring your saved workout…')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Weight (lb)')).toHaveValue(100)
+    expect(screen.getAllByLabelText('Reps')[0]).toHaveValue(8)
+    expect(screen.getByLabelText('Weight (lb)')).toBeEnabled()
+    expect(screen.getAllByRole('combobox')[0]).toBeEnabled()
+    expect(screen.getAllByRole('checkbox')[0]).toBeEnabled()
+    for (const button of screen.getAllByRole('button', { name: 'Finish workout' })) {
+      expect(button).toBeEnabled()
+    }
+    expect(screen.getByRole('button', { name: 'End early' })).toBeEnabled()
+    expect(mock.save).not.toHaveBeenCalled()
+  })
+
+  it('waits to confirm an open finish dialog while workout synchronization reloads', async () => {
+    const session = active()
+    session.exercises[0].sets[0] = {
+      ...session.exercises[0].sets[0],
+      weightKg: 40,
+      reps: 8,
+      completedAt: Date.now(),
+    }
+    const user = userEvent.setup()
+    const view = render(app(`/train/${session.id}`))
+    await user.click(screen.getAllByRole('button', { name: 'Finish workout' })[0])
+    expect(screen.getByRole('button', { name: 'Finish and save' })).toBeEnabled()
+
+    mock.loading = true
+    view.rerender(app(`/train/${session.id}`))
+    const confirmation = screen.getByRole('button', { name: 'Finish and save' })
+    expect(confirmation).toBeDisabled()
+    await user.click(confirmation)
+    expect(mock.finish).not.toHaveBeenCalled()
+
+    mock.loading = false
+    view.rerender(app(`/train/${session.id}`))
+    expect(screen.getByRole('button', { name: 'Finish and save' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Finish and save' }))
+    expect(mock.finish).toHaveBeenCalledTimes(1)
+    expect(mock.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: session.id,
+        exercises: [
+          expect.objectContaining({
+            sets: [expect.objectContaining({ weightKg: 40, reps: 8 })],
+          }),
+        ],
+      }),
+      'completed',
+    )
+  })
+
   it('starts a routine once and offers the existing workout instead of a second start', async () => {
     const session = active()
     render(app('/train'))
@@ -572,7 +653,7 @@ describe('Workout logger', () => {
     await user.selectOptions(unit, 'lb')
     actual('Weight (lb)', '100.125')
     expect(screen.getByLabelText('Weight (lb)')).toHaveValue(100.125)
-    expect(screen.getByText('≈ 45.4159 kg · saved automatically')).toBeInTheDocument()
+    expect(screen.getByText('≈ 45.4159 kg')).toBeInTheDocument()
     expect(latestSaved().exercises[0].sets[0]).toMatchObject({
       weightKg: 45.4159,
       inputWeightUnit: 'lb',
@@ -613,7 +694,7 @@ describe('Workout logger', () => {
     render(app(`/train/${session.id}`))
     expect(screen.getByRole('combobox')).toHaveValue('lb')
     expect(screen.getByLabelText('Assistance (lb)')).toHaveValue(20)
-    expect(screen.getByText('≈ 9.0718 kg · saved automatically')).toBeInTheDocument()
+    expect(screen.getByText('≈ 9.0718 kg')).toBeInTheDocument()
     await user.click(screen.getByRole('checkbox'))
     expect(screen.getByRole('combobox')).toBeDisabled()
     expect(screen.getByLabelText('Assistance (lb)')).toBeDisabled()
@@ -632,7 +713,7 @@ describe('Workout logger', () => {
     await user.selectOptions(screen.getByRole('combobox'), 'lb')
     actual('Weight (lb)', '0')
     actual('Reps', '8')
-    expect(screen.getByText('≈ 0 kg · saved automatically')).toBeInTheDocument()
+    expect(screen.getByText('≈ 0 kg')).toBeInTheDocument()
     await user.click(screen.getByRole('checkbox'))
     expect(screen.getByRole('checkbox')).toBeChecked()
     expect(latestSaved().exercises[0].sets[0].weightKg).toBe(0)

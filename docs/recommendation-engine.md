@@ -1,6 +1,6 @@
 # Recommendation engine design
 
-Status: initial Phase 4 Rolling scheduling is implemented. Today and Train display a deterministic next-workout recommendation for the active Rolling split. Fixed scheduling, Adaptive scoring, availability, time adaptation, and schedule overrides remain planned; Phase 4 is not complete.
+Status: Rolling scheduling and the initial Fixed calendar are implemented. Today and Train display the next eligible workout for either mode. Adaptive scoring, richer availability, and time adaptation remain planned; Phase 4 is not complete.
 
 The [Rolling module](../src/domain/scheduling/rolling.ts) uses plain-data inputs and outputs, independent of React, Firebase, and browser APIs. Its split, routines, saved cursor, current instant, and account timezone determine the result. The future Adaptive engine will add versioned scoring and stable tie-breaking so identical inputs continue to produce identical results.
 
@@ -8,7 +8,7 @@ The [Rolling module](../src/domain/scheduling/rolling.ts) uses plain-data inputs
 
 | Mode     | Status      | Behavior                                                                                                          |
 | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------- |
-| Fixed    | Planned     | Follow dated occurrences and offer explicit move, swap, skip, or reschedule actions                               |
+| Fixed    | Implemented | A 28-day calendar with dated occurrences and explicit move, swap, and skip actions                                |
 | Rolling  | Implemented | Continue the ordered split after the last qualifying completion, regardless of missed days or week boundaries     |
 | Adaptive | Planned     | Compare feasible workouts using split continuity, recent training, availability, recovery, goals, and preferences |
 
@@ -27,6 +27,16 @@ A scheduled workout counts automatically when its frozen planned sets have all b
 `workoutState/current` stores a `rollingProgress` cursor for each split: split revision, next sequence, last counted slot and session IDs, and completion timestamp. Terminal session history, clearing the active-workout pointer, and advancing the matching cursor are one atomic write. The durable checkpoint also retains the attempted state, so offline completion, reload, retry, and conflict recovery preserve the same token. Rules reject forged, duplicate, stale, or out-of-order cursor changes and preserve unrelated splits' progress. Historical workouts started before sequence tokens were introduced remain standalone for advancement purposes.
 
 Switching active splits preserves each split's cursor. Editing a split starts the new revision at its first training slot. A workout for a split that changed or is no longer active can still save completed history without advancing it. There is no reset interface yet.
+
+## Current Fixed scheduling
+
+The [Fixed module](../src/domain/scheduling/fixed.ts) generates 28 inclusive calendar dates from the active Fixed split, a chosen start date, saved timezone, and selected training weekdays. Empty weekdays permit any day. Training slots advance only on selected weekdays; an intervening rest slot occupies the following calendar date. The calendar freezes its split revision and timezone, so travelling or changing account preferences does not silently shift its dates.
+
+The calendar shows the current week and a separate list of missed training occurrences. The next-workout card prefers the oldest overdue training occurrence, then today's occurrence, then the next future occurrence. Passed dates never silently consume training. Users can move a planned occurrence to an unoccupied date within the window, swap two planned dates, or explicitly skip one. Completed occurrences remain immutable. Future workouts must be moved to an eligible date before starting them.
+
+Each start freezes `fixedContext` with the schedule ID, generation ID, occurrence ID, and occurrence version, alongside the split/slot context. Full planned coverage counts automatically; partial coverage uses the same initially unchecked inclusion choice as Rolling. Ending early or completing standalone work leaves the occurrence planned. A qualifying finish atomically saves terminal history, clears the active-workout pointer, and marks exactly that occurrence completed. Its calendar payload is retained in the workout checkpoint's attempted write for offline acknowledgment and recovery.
+
+Changing an occurrence, regenerating the calendar, or editing/deactivating the split invalidates the old completion token. History can still be saved without completing the changed occurrence. Creating the next calendar is explicit: a replacement confirmation warns that unresolved dates will be replaced and the split starts from its first slot. Completed workout history stays available. The initial calendar does not automatically extend beyond its 28-day window.
 
 ## Planned Adaptive pipeline
 
@@ -47,10 +57,10 @@ Explanations come from contributing factors, for example: “Pull is next in you
 
 Rolling advancement follows the qualification rules above. A long absence leaves the next slot intact and does not accumulate catch-up sessions. A future Adaptive flow may offer a manageable restart based on the user's constraints and recent training.
 
-Future overrides will be explicit events for repeat, skip, swap, reset, and selecting another workout. The current interface does not implement those events; a library workout remains standalone. Historical corrections will invalidate affected analytics and recommendations. Progressive-overload suggestions will require repeated eligible performance and remain user-editable.
+Fixed calendars implement explicit move, swap, and skip actions with revision and occurrence-version checks. Rolling repeat/skip/swap/reset controls and richer override history remain future work; a library workout remains standalone. Historical corrections will invalidate affected analytics and recommendations. Progressive-overload suggestions will require repeated eligible performance and remain user-editable.
 
 ## Required validation
 
 Current Rolling checks cover missed days, local-calendar rest dates and boundaries, partial planned coverage, duplicate/stale completion, standalone sessions, split edits and switching, offline recovery, and deterministic selection. See [testing](./testing.md) for executed checks and limitations.
 
-Remaining validation must cover reset and other override events, Fixed occurrences, Adaptive constraints, excluded equipment/exercises, insufficient history, impossible time budgets, and scoring explanations. Validate each future explanation against the factors that actually contributed to its score.
+Fixed checks cover calendar generation and edits, frozen occurrence identity, timezone/week boundaries, partial inclusion, and offline completion. Remaining validation must cover future Rolling reset/override controls, Adaptive constraints, excluded equipment/exercises, insufficient history, impossible time budgets, and scoring explanations. Validate each future explanation against the factors that actually contributed to its score.

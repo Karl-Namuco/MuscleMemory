@@ -107,8 +107,8 @@ export default function RollingRecommendation({
         <p>{recommendation.reason}</p>
         {recommendation.kind === 'unsupported' && (
           <p>
-            Fixed and Adaptive recommendations are coming in a later update. Use a Rolling split to
-            follow your routine sequence now.
+            Adaptive recommendations are coming in a later update. Use a Rolling split to follow
+            your routine sequence now.
           </p>
         )}
         {recommendation.kind === 'rest' && (

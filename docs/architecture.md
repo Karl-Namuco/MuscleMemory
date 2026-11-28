@@ -14,7 +14,7 @@ The client uses React, Vite, strict TypeScript, React Router, React Hook Form, Z
 | Types        | Stored account, training, and workout contracts                                                        | [types](../src/types/)                                                                                           |
 | Local drafts | Account-scoped forms and workout interruption recovery                                                 | [onboarding drafts](../src/features/onboarding/draft.ts), [workout storage](../src/services/workouts/storage.ts) |
 
-Routes wait for authentication resolution. An unapproved account sees the approval screen. An approved account with incomplete onboarding enters setup before the authenticated shell. Completed accounts can open Today, Plan, Train, History, Progress, Profile, and Settings. Plan manages routines and splits; Today and Train recommend the exact next workout for the active Rolling split. Train also starts standalone library workouts, resumes active sessions, and links to completed or ended-early history. Progress analytics, Fixed scheduling, and Adaptive scoring remain upcoming features.
+Routes wait for authentication resolution. An unapproved account sees the approval screen. An approved account with incomplete onboarding enters setup before the authenticated shell. Completed accounts can open Today, Plan, Train, History, Progress, Profile, and Settings. Plan manages routines, splits, and Fixed calendars; Today and Train recommend the next eligible workout for Rolling or Fixed mode. Train also starts standalone library workouts, resumes active sessions, and links to completed or ended-early history. Progress analytics and Adaptive scoring remain upcoming features.
 
 ## Current database model
 
@@ -40,13 +40,14 @@ Production builds precache application assets. The development server intentiona
 
 Built-in exercises are versioned application data. Custom exercises, routines, splits, and the active split are private to each approved account:
 
-| Path under `users/{uid}`                        | Contents                                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `customExercises/{id}`                          | Movement details, tracking type, muscles, cues, alternatives, and archive state                  |
-| `routines/{id}`                                 | Exercise snapshots, ordered planned sets, rests, optional entries, and supersets                 |
-| `routines/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with a routine                           |
-| `splits/{id}`                                   | Up to 12 ordered routine/rest slots, implemented Rolling mode, and reserved Fixed/Adaptive modes |
-| `trainingSettings/current`                      | Active split identifier                                                                          |
+| Path under `users/{uid}`                        | Contents                                                                                 |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `customExercises/{id}`                          | Movement details, tracking type, muscles, cues, alternatives, and archive state          |
+| `routines/{id}`                                 | Exercise snapshots, ordered planned sets, rests, optional entries, and supersets         |
+| `routines/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with a routine                   |
+| `splits/{id}`                                   | Up to 12 ordered routine/rest slots, Rolling and Fixed modes, and reserved Adaptive mode |
+| `trainingSettings/current`                      | Active split identifier                                                                  |
+| `fixedSchedules/{splitId}`                      | Frozen 28-day calendar with versioned planned, completed, and skipped occurrences        |
 
 Routines support up to 20 exercises and 12 sets per exercise. Firestore rules have a 1,000-expression limit per write, so each routine save includes one to four validation pages of at most six exercises. Page rules validate each entry; root rules require their exact concatenation, owner, revision, and mutation identifier to match the full routine. Pages cannot be read, listed, deleted, or replaced independently by a client. This preserves the full routine shape and adds one to four writes per routine save. Template batches contain only routines of six exercises or fewer and stay within the batch access budget.
 
@@ -66,7 +67,7 @@ Lists load the 200 most recently changed records per collection. The active spli
 | `workoutSessions/{id}/validationPages/p0` through `p3` | Internal bounded validation records, atomically written with each session revision                                                                                                                 |
 | `workoutState/current`                                 | Revision-checked pointer to the account's single active workout and per-split `rollingProgress` cursors                                                                                            |
 
-The [workout contracts](../src/types/workout.ts) and [strict runtime schemas](../src/schemas/workout.ts) separate planned targets from actual performance. Actual inputs start empty. The five tracking types are weight/reps, reps, assisted reps, duration, and distance/duration. Weight is stored in kilograms, distance in meters, and duration in seconds; displayed weight follows the account's kilogram/pound preference. RPE is optional, from 1 to 10. Only sets explicitly marked complete contribute to totals. Assistance is retained as assistance and excluded from external lifted volume.
+The [workout contracts](../src/types/workout.ts) and [strict runtime schemas](../src/schemas/workout.ts) separate planned targets from actual performance. Actual inputs start empty. The five tracking types are weight/reps, reps, assisted reps, duration, and distance/duration. Weight is stored in kilograms, distance in meters, and duration in seconds. Planned targets, history, and totals follow the account's kilogram/pound preference; actual entry can choose kg or lb per set without changing the stored unit. RPE is optional, from 1 to 10. Only sets explicitly marked complete contribute to totals. Assistance is retained as assistance and excluded from external lifted volume.
 
 Starting a routine copies its revision, name, exercises, planned sets, rest values, optional flags, and superset groups into a session. Later edits to the routine do not replace these snapshots. An explicit exercise substitution updates that session only and clears incomplete actuals; substitution is blocked once the entry has completed sets. Previous performance is matched by the exercise actually performed and includes only completed sets from the latest completed session within the loaded history. Ended-early sessions remain visible in history but are excluded from this previous-performance lookup.
 
@@ -96,7 +97,17 @@ Switching active splits preserves their individual cursors. Editing a split star
 
 Consecutive rest slots after a counted completion reserve full dates in the account timezone. With `N` rest slots, the next training date is the completion's local date plus `N + 1` days. No rest slots means immediate availability. Leading rest slots do not block a new revision's first workout. The interface offers **Train early** with explicit confirmation. Missed dates and week boundaries do not consume slots or add catch-up volume.
 
-Fixed dated occurrences, Adaptive scoring, availability, time adaptation, explicit repeat/skip/swap/reset events, soreness inputs, and derived analytics remain future work. See [recommendation behavior and plans](./recommendation-engine.md).
+Adaptive scoring, richer availability, time adaptation, Rolling repeat/skip/swap/reset controls, soreness inputs, and derived analytics remain future work. See [recommendation behavior and plans](./recommendation-engine.md).
+
+## Fixed calendar and exercise entry
+
+`fixedSchedules/{splitId}` stores a revision-checked 28-day calendar with an immutable generation identifier, split revision, timezone, selected weekdays, and up to 28 occurrence snapshots. Every occurrence has a stable generation/sequence ID, original date, adjustable scheduled date, version, and planned/completed/skipped status. The training provider observes and recovers these records alongside the other account-scoped training data. Move, swap, skip, and calendar replacement saves use its durable recovery ledger and Firestore queue.
+
+Calendar saves include up to six `fixedSchedules/{splitId}/validationPages/p0` through `p5` records, each validating at most five occurrences. They must match the parent revision and mutation. Rules tie changed occurrences to the declared action, preserve unrelated entries, and enforce immutable completed work. A counted Fixed finish writes the completed session, active pointer, updated calendar, and their validation pages in one batch. The exact attempted calendar is included in the workout checkpoint; acknowledgments retain the latest confirmed calendar while its training listener catches up. Missing plan data delays the advancement decision rather than discarding inclusion intent.
+
+The routine exercise picker can create a named custom exercise without navigating away from the routine. It uses the existing custom-exercise schema and account-scoped draft storage. A successful creation's returned ID is immediately usable in the routine even if the document listener arrives after the batch acknowledgment. Existing built-in IDs remain stable as the catalogue expands to 69 movements.
+
+Actual weight fields support a per-set `inputWeightUnit` (`kg` or `lb`), initially falling back to the account preference. Pound entries are converted using 0.45359237 kilograms per pound and rounded to four decimal places for storage. Changing the display unit preserves the canonical `weightKg` value; planned targets, history, and totals continue to use their explicit account-unit labels. The optional input unit persists with the workout checkpoint and is backward compatible with older sets.
 
 ## Limitations
 
@@ -104,7 +115,7 @@ Fixed dated occurrences, Adaptive scoring, availability, time adaptation, explic
 - Browser storage can be evicted or manually cleared. Local drafts are not backups.
 - iOS can suspend JavaScript. Workout timers recover from timestamps; background alerts are not implemented.
 - WebKit automation does not certify physical iPhone installation, keyboard, backgrounding, or storage behavior.
-- Rolling recommendations and qualifying advancement are implemented. Fixed scheduling, Adaptive scoring, schedule overrides including reset, analytics, complete data export, account deletion, and terminal-history editing remain unimplemented.
+- Rolling recommendations and qualifying advancement, plus a 28-day Fixed calendar with move/swap/skip actions, are implemented. Automatic calendar extension, Adaptive scoring, Rolling override/reset controls, analytics, complete data export, account deletion, and terminal-history editing remain unimplemented.
 - Firestore quotas and Spark limits can interrupt service. Query/listener scope must remain bounded as features grow.
 - The production build separates vendor chunks, but the Firebase SDK chunk still produces a size warning. Further bundle and loading optimization belongs to Phase 6.
 - The owner reported deploying Phase 2. The agent has not published Phase 3 or this initial Phase 4 increment. Release the updated client and compatible rules together, and refresh older installed clients so they understand the new scheduling fields.
